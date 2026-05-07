@@ -60,6 +60,7 @@ import (
 	authDomain "github.com/block/proto-fleet/server/internal/domain/auth"
 	collectionDomain "github.com/block/proto-fleet/server/internal/domain/collection"
 	commandDomain "github.com/block/proto-fleet/server/internal/domain/command"
+	curtailmentDomain "github.com/block/proto-fleet/server/internal/domain/curtailment"
 	"github.com/block/proto-fleet/server/internal/domain/deviceresolver"
 	"github.com/block/proto-fleet/server/internal/domain/diagnostics"
 	fleetmanagementDomain "github.com/block/proto-fleet/server/internal/domain/fleetmanagement"
@@ -372,6 +373,9 @@ func start(config *Config) error {
 	scheduleStore := sqlstores.NewSQLScheduleStore(conn)
 	scheduleSvc := scheduleDomain.NewService(scheduleStore, scheduleStore, scheduleStore, transactor, activitySvc)
 
+	curtailmentStore := sqlstores.NewSQLCurtailmentStore(conn)
+	curtailmentSvc := curtailmentDomain.NewService(curtailmentStore)
+
 	// Register the schedule-conflict preflight filter on commandSvc so every
 	// caller (manual API, schedule processor, future curtailment reconciler)
 	// sees the same priority/manual-fallback semantics. Pre-pre-work this
@@ -443,8 +447,9 @@ func start(config *Config) error {
 	mux.Handle(minercommandv1connect.NewMinerCommandServiceHandler(command.NewHandler(commandSvc), li))
 	mux.Handle(poolsv1connect.NewPoolsServiceHandler(pools.NewHandler(poolsSvc), li))
 	mux.Handle(schedulev1connect.NewScheduleServiceHandler(scheduleHandler.NewHandler(scheduleSvc), li))
-	// Register v1 curtailment routes; the handler returns Unimplemented for now.
-	mux.Handle(curtailmentv1connect.NewCurtailmentServiceHandler(curtailmentHandler.NewHandler(), li))
+	// Curtailment v1: PreviewCurtailmentPlan is implemented; remaining
+	// RPCs return Unimplemented until follow-up work lands.
+	mux.Handle(curtailmentv1connect.NewCurtailmentServiceHandler(curtailmentHandler.NewHandler(curtailmentSvc), li))
 	mux.Handle(agentgatewayv1connect.NewAgentGatewayServiceHandler(agentgateway.NewHandler(agentEnrollmentSvc, agentAuthSvc), li))
 	mux.Handle(agentadminv1connect.NewAgentAdminServiceHandler(agentadmin.NewHandler(agentEnrollmentSvc), li))
 	mux.Handle(collectionv1connect.NewDeviceCollectionServiceHandler(collectionHandler.NewHandler(collectionSvc), li))

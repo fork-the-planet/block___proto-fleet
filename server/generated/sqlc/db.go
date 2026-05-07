@@ -135,6 +135,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deviceSetBelongsToOrgStmt, err = db.PrepareContext(ctx, deviceSetBelongsToOrg); err != nil {
 		return nil, fmt.Errorf("error preparing query DeviceSetBelongsToOrg: %w", err)
 	}
+	if q.ensureCurtailmentOrgConfigStmt, err = db.PrepareContext(ctx, ensureCurtailmentOrgConfig); err != nil {
+		return nil, fmt.Errorf("error preparing query EnsureCurtailmentOrgConfig: %w", err)
+	}
 	if q.getActiveSchedulesStmt, err = db.PrepareContext(ctx, getActiveSchedules); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveSchedules: %w", err)
 	}
@@ -188,6 +191,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getBatchStatusAndDeviceCountsStmt, err = db.PrepareContext(ctx, getBatchStatusAndDeviceCounts); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBatchStatusAndDeviceCounts: %w", err)
+	}
+	if q.getCurtailmentEventByUUIDStmt, err = db.PrepareContext(ctx, getCurtailmentEventByUUID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCurtailmentEventByUUID: %w", err)
+	}
+	if q.getCurtailmentOrgConfigStmt, err = db.PrepareContext(ctx, getCurtailmentOrgConfig); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCurtailmentOrgConfig: %w", err)
+	}
+	if q.getCurtailmentReconcilerHeartbeatStmt, err = db.PrepareContext(ctx, getCurtailmentReconcilerHeartbeat); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCurtailmentReconcilerHeartbeat: %w", err)
 	}
 	if q.getDeviceByDeviceIdentifierStmt, err = db.PrepareContext(ctx, getDeviceByDeviceIdentifier); err != nil {
 		return nil, fmt.Errorf("error preparing query GetDeviceByDeviceIdentifier: %w", err)
@@ -444,6 +456,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertActivityLogStmt, err = db.PrepareContext(ctx, insertActivityLog); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertActivityLog: %w", err)
 	}
+	if q.insertCurtailmentEventStmt, err = db.PrepareContext(ctx, insertCurtailmentEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertCurtailmentEvent: %w", err)
+	}
+	if q.insertCurtailmentTargetStmt, err = db.PrepareContext(ctx, insertCurtailmentTarget); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertCurtailmentTarget: %w", err)
+	}
 	if q.insertDeviceStmt, err = db.PrepareContext(ctx, insertDevice); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertDevice: %w", err)
 	}
@@ -462,6 +480,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.isBatchProcessingStmt, err = db.PrepareContext(ctx, isBatchProcessing); err != nil {
 		return nil, fmt.Errorf("error preparing query IsBatchProcessing: %w", err)
 	}
+	if q.listActiveCurtailedDevicesByOrgStmt, err = db.PrepareContext(ctx, listActiveCurtailedDevicesByOrg); err != nil {
+		return nil, fmt.Errorf("error preparing query ListActiveCurtailedDevicesByOrg: %w", err)
+	}
 	if q.listActivityLogsStmt, err = db.PrepareContext(ctx, listActivityLogs); err != nil {
 		return nil, fmt.Errorf("error preparing query ListActivityLogs: %w", err)
 	}
@@ -473,6 +494,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listBatchDeviceResultsStmt, err = db.PrepareContext(ctx, listBatchDeviceResults); err != nil {
 		return nil, fmt.Errorf("error preparing query ListBatchDeviceResults: %w", err)
+	}
+	if q.listCurtailmentCandidatesByOrgStmt, err = db.PrepareContext(ctx, listCurtailmentCandidatesByOrg); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCurtailmentCandidatesByOrg: %w", err)
+	}
+	if q.listCurtailmentTargetsByEventStmt, err = db.PrepareContext(ctx, listCurtailmentTargetsByEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCurtailmentTargetsByEvent: %w", err)
 	}
 	if q.listDeviceSetMembersPaginatedStmt, err = db.PrepareContext(ctx, listDeviceSetMembersPaginated); err != nil {
 		return nil, fmt.Errorf("error preparing query ListDeviceSetMembersPaginated: %w", err)
@@ -494,6 +521,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listRackZonesStmt, err = db.PrepareContext(ctx, listRackZones); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRackZones: %w", err)
+	}
+	if q.listRecentlyResolvedCurtailedDevicesByOrgStmt, err = db.PrepareContext(ctx, listRecentlyResolvedCurtailedDevicesByOrg); err != nil {
+		return nil, fmt.Errorf("error preparing query ListRecentlyResolvedCurtailedDevicesByOrg: %w", err)
 	}
 	if q.listRolesStmt, err = db.PrepareContext(ctx, listRoles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoles: %w", err)
@@ -928,6 +958,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deviceSetBelongsToOrgStmt: %w", cerr)
 		}
 	}
+	if q.ensureCurtailmentOrgConfigStmt != nil {
+		if cerr := q.ensureCurtailmentOrgConfigStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing ensureCurtailmentOrgConfigStmt: %w", cerr)
+		}
+	}
 	if q.getActiveSchedulesStmt != nil {
 		if cerr := q.getActiveSchedulesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveSchedulesStmt: %w", cerr)
@@ -1016,6 +1051,21 @@ func (q *Queries) Close() error {
 	if q.getBatchStatusAndDeviceCountsStmt != nil {
 		if cerr := q.getBatchStatusAndDeviceCountsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBatchStatusAndDeviceCountsStmt: %w", cerr)
+		}
+	}
+	if q.getCurtailmentEventByUUIDStmt != nil {
+		if cerr := q.getCurtailmentEventByUUIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCurtailmentEventByUUIDStmt: %w", cerr)
+		}
+	}
+	if q.getCurtailmentOrgConfigStmt != nil {
+		if cerr := q.getCurtailmentOrgConfigStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCurtailmentOrgConfigStmt: %w", cerr)
+		}
+	}
+	if q.getCurtailmentReconcilerHeartbeatStmt != nil {
+		if cerr := q.getCurtailmentReconcilerHeartbeatStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCurtailmentReconcilerHeartbeatStmt: %w", cerr)
 		}
 	}
 	if q.getDeviceByDeviceIdentifierStmt != nil {
@@ -1443,6 +1493,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertActivityLogStmt: %w", cerr)
 		}
 	}
+	if q.insertCurtailmentEventStmt != nil {
+		if cerr := q.insertCurtailmentEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertCurtailmentEventStmt: %w", cerr)
+		}
+	}
+	if q.insertCurtailmentTargetStmt != nil {
+		if cerr := q.insertCurtailmentTargetStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertCurtailmentTargetStmt: %w", cerr)
+		}
+	}
 	if q.insertDeviceStmt != nil {
 		if cerr := q.insertDeviceStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertDeviceStmt: %w", cerr)
@@ -1473,6 +1533,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing isBatchProcessingStmt: %w", cerr)
 		}
 	}
+	if q.listActiveCurtailedDevicesByOrgStmt != nil {
+		if cerr := q.listActiveCurtailedDevicesByOrgStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listActiveCurtailedDevicesByOrgStmt: %w", cerr)
+		}
+	}
 	if q.listActivityLogsStmt != nil {
 		if cerr := q.listActivityLogsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listActivityLogsStmt: %w", cerr)
@@ -1491,6 +1556,16 @@ func (q *Queries) Close() error {
 	if q.listBatchDeviceResultsStmt != nil {
 		if cerr := q.listBatchDeviceResultsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listBatchDeviceResultsStmt: %w", cerr)
+		}
+	}
+	if q.listCurtailmentCandidatesByOrgStmt != nil {
+		if cerr := q.listCurtailmentCandidatesByOrgStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCurtailmentCandidatesByOrgStmt: %w", cerr)
+		}
+	}
+	if q.listCurtailmentTargetsByEventStmt != nil {
+		if cerr := q.listCurtailmentTargetsByEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCurtailmentTargetsByEventStmt: %w", cerr)
 		}
 	}
 	if q.listDeviceSetMembersPaginatedStmt != nil {
@@ -1526,6 +1601,11 @@ func (q *Queries) Close() error {
 	if q.listRackZonesStmt != nil {
 		if cerr := q.listRackZonesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listRackZonesStmt: %w", cerr)
+		}
+	}
+	if q.listRecentlyResolvedCurtailedDevicesByOrgStmt != nil {
+		if cerr := q.listRecentlyResolvedCurtailedDevicesByOrgStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listRecentlyResolvedCurtailedDevicesByOrgStmt: %w", cerr)
 		}
 	}
 	if q.listRolesStmt != nil {
@@ -2009,6 +2089,7 @@ type Queries struct {
 	deletePoolStmt                                      *sql.Stmt
 	deleteScheduleTargetsStmt                           *sql.Stmt
 	deviceSetBelongsToOrgStmt                           *sql.Stmt
+	ensureCurtailmentOrgConfigStmt                      *sql.Stmt
 	getActiveSchedulesStmt                              *sql.Stmt
 	getActiveUnpairedDiscoveredDevicesStmt              *sql.Stmt
 	getAgentByIDStmt                                    *sql.Stmt
@@ -2027,6 +2108,9 @@ type Queries struct {
 	getBatchHeaderForOrgStmt                            *sql.Stmt
 	getBatchLogStmt                                     *sql.Stmt
 	getBatchStatusAndDeviceCountsStmt                   *sql.Stmt
+	getCurtailmentEventByUUIDStmt                       *sql.Stmt
+	getCurtailmentOrgConfigStmt                         *sql.Stmt
+	getCurtailmentReconcilerHeartbeatStmt               *sql.Stmt
 	getDeviceByDeviceIdentifierStmt                     *sql.Stmt
 	getDeviceByIDStmt                                   *sql.Stmt
 	getDeviceDeviceSetsStmt                             *sql.Stmt
@@ -2112,16 +2196,21 @@ type Queries struct {
 	getUsersForOrganizationStmt                         *sql.Stmt
 	hasUserStmt                                         *sql.Stmt
 	insertActivityLogStmt                               *sql.Stmt
+	insertCurtailmentEventStmt                          *sql.Stmt
+	insertCurtailmentTargetStmt                         *sql.Stmt
 	insertDeviceStmt                                    *sql.Stmt
 	insertDeviceMetricsStmt                             *sql.Stmt
 	insertErrorStmt                                     *sql.Stmt
 	insertMinerStateSnapshotStmt                        *sql.Stmt
 	isBatchFinishedStmt                                 *sql.Stmt
 	isBatchProcessingStmt                               *sql.Stmt
+	listActiveCurtailedDevicesByOrgStmt                 *sql.Stmt
 	listActivityLogsStmt                                *sql.Stmt
 	listAgentsForOrganizationStmt                       *sql.Stmt
 	listApiKeysByOrganizationStmt                       *sql.Stmt
 	listBatchDeviceResultsStmt                          *sql.Stmt
+	listCurtailmentCandidatesByOrgStmt                  *sql.Stmt
+	listCurtailmentTargetsByEventStmt                   *sql.Stmt
 	listDeviceSetMembersPaginatedStmt                   *sql.Stmt
 	listDeviceSetMembersPaginatedAfterStmt              *sql.Stmt
 	listMinerStateSnapshotsStmt                         *sql.Stmt
@@ -2129,6 +2218,7 @@ type Queries struct {
 	listPoolsStmt                                       *sql.Stmt
 	listRackTypesStmt                                   *sql.Stmt
 	listRackZonesStmt                                   *sql.Stmt
+	listRecentlyResolvedCurtailedDevicesByOrgStmt       *sql.Stmt
 	listRolesStmt                                       *sql.Stmt
 	listScheduleIDStatusesStmt                          *sql.Stmt
 	listSchedulesStmt                                   *sql.Stmt
@@ -2253,6 +2343,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deletePoolStmt:                                      q.deletePoolStmt,
 		deleteScheduleTargetsStmt:                           q.deleteScheduleTargetsStmt,
 		deviceSetBelongsToOrgStmt:                           q.deviceSetBelongsToOrgStmt,
+		ensureCurtailmentOrgConfigStmt:                      q.ensureCurtailmentOrgConfigStmt,
 		getActiveSchedulesStmt:                              q.getActiveSchedulesStmt,
 		getActiveUnpairedDiscoveredDevicesStmt:              q.getActiveUnpairedDiscoveredDevicesStmt,
 		getAgentByIDStmt:                                    q.getAgentByIDStmt,
@@ -2271,6 +2362,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBatchHeaderForOrgStmt:                            q.getBatchHeaderForOrgStmt,
 		getBatchLogStmt:                                     q.getBatchLogStmt,
 		getBatchStatusAndDeviceCountsStmt:                   q.getBatchStatusAndDeviceCountsStmt,
+		getCurtailmentEventByUUIDStmt:                       q.getCurtailmentEventByUUIDStmt,
+		getCurtailmentOrgConfigStmt:                         q.getCurtailmentOrgConfigStmt,
+		getCurtailmentReconcilerHeartbeatStmt:               q.getCurtailmentReconcilerHeartbeatStmt,
 		getDeviceByDeviceIdentifierStmt:                     q.getDeviceByDeviceIdentifierStmt,
 		getDeviceByIDStmt:                                   q.getDeviceByIDStmt,
 		getDeviceDeviceSetsStmt:                             q.getDeviceDeviceSetsStmt,
@@ -2356,16 +2450,21 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getUsersForOrganizationStmt:                         q.getUsersForOrganizationStmt,
 		hasUserStmt:                                         q.hasUserStmt,
 		insertActivityLogStmt:                               q.insertActivityLogStmt,
+		insertCurtailmentEventStmt:                          q.insertCurtailmentEventStmt,
+		insertCurtailmentTargetStmt:                         q.insertCurtailmentTargetStmt,
 		insertDeviceStmt:                                    q.insertDeviceStmt,
 		insertDeviceMetricsStmt:                             q.insertDeviceMetricsStmt,
 		insertErrorStmt:                                     q.insertErrorStmt,
 		insertMinerStateSnapshotStmt:                        q.insertMinerStateSnapshotStmt,
 		isBatchFinishedStmt:                                 q.isBatchFinishedStmt,
 		isBatchProcessingStmt:                               q.isBatchProcessingStmt,
+		listActiveCurtailedDevicesByOrgStmt:                 q.listActiveCurtailedDevicesByOrgStmt,
 		listActivityLogsStmt:                                q.listActivityLogsStmt,
 		listAgentsForOrganizationStmt:                       q.listAgentsForOrganizationStmt,
 		listApiKeysByOrganizationStmt:                       q.listApiKeysByOrganizationStmt,
 		listBatchDeviceResultsStmt:                          q.listBatchDeviceResultsStmt,
+		listCurtailmentCandidatesByOrgStmt:                  q.listCurtailmentCandidatesByOrgStmt,
+		listCurtailmentTargetsByEventStmt:                   q.listCurtailmentTargetsByEventStmt,
 		listDeviceSetMembersPaginatedStmt:                   q.listDeviceSetMembersPaginatedStmt,
 		listDeviceSetMembersPaginatedAfterStmt:              q.listDeviceSetMembersPaginatedAfterStmt,
 		listMinerStateSnapshotsStmt:                         q.listMinerStateSnapshotsStmt,
@@ -2373,6 +2472,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listPoolsStmt:                                       q.listPoolsStmt,
 		listRackTypesStmt:                                   q.listRackTypesStmt,
 		listRackZonesStmt:                                   q.listRackZonesStmt,
+		listRecentlyResolvedCurtailedDevicesByOrgStmt:       q.listRecentlyResolvedCurtailedDevicesByOrgStmt,
 		listRolesStmt:                                       q.listRolesStmt,
 		listScheduleIDStatusesStmt:                          q.listScheduleIDStatusesStmt,
 		listSchedulesStmt:                                   q.listSchedulesStmt,
