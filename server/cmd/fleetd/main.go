@@ -38,6 +38,7 @@ import (
 	"github.com/block/proto-fleet/server/generated/grpc/activity/v1/activityv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/apikey/v1/apikeyv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/auth/v1/authv1connect"
+	"github.com/block/proto-fleet/server/generated/grpc/buildings/v1/buildingsv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/collection/v1/collectionv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/curtailment/v1/curtailmentv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/device_set/v1/device_setv1connect"
@@ -53,10 +54,12 @@ import (
 	"github.com/block/proto-fleet/server/generated/grpc/pools/v1/poolsv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/schedule/v1/schedulev1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/serverlog/v1/serverlogv1connect"
+	"github.com/block/proto-fleet/server/generated/grpc/sites/v1/sitesv1connect"
 	"github.com/block/proto-fleet/server/generated/grpc/telemetry/v1/telemetryv1connect"
 	activityDomain "github.com/block/proto-fleet/server/internal/domain/activity"
 	apikeyDomain "github.com/block/proto-fleet/server/internal/domain/apikey"
 	authDomain "github.com/block/proto-fleet/server/internal/domain/auth"
+	buildingsDomain "github.com/block/proto-fleet/server/internal/domain/buildings"
 	collectionDomain "github.com/block/proto-fleet/server/internal/domain/collection"
 	commandDomain "github.com/block/proto-fleet/server/internal/domain/command"
 	curtailmentDomain "github.com/block/proto-fleet/server/internal/domain/curtailment"
@@ -71,6 +74,7 @@ import (
 	pairingDomain "github.com/block/proto-fleet/server/internal/domain/pairing"
 	poolsDomain "github.com/block/proto-fleet/server/internal/domain/pools"
 	scheduleDomain "github.com/block/proto-fleet/server/internal/domain/schedule"
+	sitesDomain "github.com/block/proto-fleet/server/internal/domain/sites"
 	"github.com/block/proto-fleet/server/internal/domain/stores/sqlstores"
 	"github.com/block/proto-fleet/server/internal/domain/telemetry"
 	"github.com/block/proto-fleet/server/internal/domain/telemetry/scheduler"
@@ -78,6 +82,7 @@ import (
 	activityHandler "github.com/block/proto-fleet/server/internal/handlers/activity"
 	apikeyHandler "github.com/block/proto-fleet/server/internal/handlers/apikey"
 	"github.com/block/proto-fleet/server/internal/handlers/auth"
+	buildingsHandler "github.com/block/proto-fleet/server/internal/handlers/buildings"
 	collectionHandler "github.com/block/proto-fleet/server/internal/handlers/collection"
 	"github.com/block/proto-fleet/server/internal/handlers/command"
 	curtailmentHandler "github.com/block/proto-fleet/server/internal/handlers/curtailment"
@@ -96,6 +101,7 @@ import (
 	"github.com/block/proto-fleet/server/internal/handlers/pools"
 	scheduleHandler "github.com/block/proto-fleet/server/internal/handlers/schedule"
 	serverlogHandler "github.com/block/proto-fleet/server/internal/handlers/serverlog"
+	sitesHandler "github.com/block/proto-fleet/server/internal/handlers/sites"
 	telemetryHandler "github.com/block/proto-fleet/server/internal/handlers/telemetry"
 	"github.com/block/proto-fleet/server/internal/infrastructure/db"
 	"github.com/block/proto-fleet/server/internal/infrastructure/server"
@@ -127,10 +133,18 @@ func main() {
 	}
 }
 
+// reflectEnabledServices lists the gRPC services exposed via the
+// reflection endpoint. Policy: every authenticated service is
+// reflected so SDK + tooling can discover them. The auth interceptor
+// chain is the security boundary; reflection itself just exposes
+// service shape (no business data), so the inclusion list is "all
+// services" rather than a curated subset.
 var reflectEnabledServices = []string{
 	pairingv1connect.PairingServiceName,
 	telemetryv1connect.TelemetryServiceName,
 	fleetnodegatewayv1connect.FleetNodeGatewayServiceName,
+	sitesv1connect.SiteServiceName,
+	buildingsv1connect.BuildingServiceName,
 }
 
 func start(config *Config) error {
@@ -378,6 +392,11 @@ func start(config *Config) error {
 	curtailmentStore := sqlstores.NewSQLCurtailmentStore(conn)
 	curtailmentSvc := curtailmentDomain.NewService(curtailmentStore)
 
+	siteStore := sqlstores.NewSQLSiteStore(conn)
+	buildingStore := sqlstores.NewSQLBuildingStore(conn)
+	sitesSvc := sitesDomain.NewService(siteStore, transactor, activitySvc)
+	buildingsSvc := buildingsDomain.NewService(buildingStore, siteStore, transactor, activitySvc)
+
 	// Register the schedule-conflict preflight filter on commandSvc so every
 	// caller (manual API, schedule processor, future curtailment reconciler)
 	// sees the same priority/manual-fallback semantics. Pre-pre-work this
@@ -452,6 +471,8 @@ func start(config *Config) error {
 	// Curtailment v1: PreviewCurtailmentPlan is implemented; remaining
 	// RPCs return Unimplemented until follow-up work lands.
 	mux.Handle(curtailmentv1connect.NewCurtailmentServiceHandler(curtailmentHandler.NewHandler(curtailmentSvc), li))
+	mux.Handle(sitesv1connect.NewSiteServiceHandler(sitesHandler.NewHandler(sitesSvc), li))
+	mux.Handle(buildingsv1connect.NewBuildingServiceHandler(buildingsHandler.NewHandler(buildingsSvc), li))
 	mux.Handle(fleetnodegatewayv1connect.NewFleetNodeGatewayServiceHandler(fleetnodegateway.NewHandler(fleetNodeEnrollmentSvc, fleetNodeAuthSvc), li))
 	mux.Handle(fleetnodeadminv1connect.NewFleetNodeAdminServiceHandler(fleetnodeadmin.NewHandler(fleetNodeEnrollmentSvc), li))
 	mux.Handle(collectionv1connect.NewDeviceCollectionServiceHandler(collectionHandler.NewHandler(collectionSvc), li))
