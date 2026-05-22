@@ -11,6 +11,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/block/proto-fleet/server/internal/domain/authz"
 	"github.com/block/proto-fleet/server/internal/domain/ipscanner"
 	"github.com/block/proto-fleet/server/internal/domain/miner"
 	"github.com/block/proto-fleet/server/internal/domain/miner/models"
@@ -177,6 +178,18 @@ func start(config *Config) error {
 	conn, err := db.ConnectAndMigrate(&config.DB)
 	if err != nil {
 		return err
+	}
+
+	// Cap the reconcile at 60s. The advisory lock inside Reconcile makes
+	// concurrent boots serialize, so a non-winner during a rolling
+	// deploy waits for the winner to commit; without a deadline a stuck
+	// reconcile would block boot forever. 60s is generous for the work
+	// (catalog upsert + 3 role rows per active org) and short enough
+	// that a stuck instance crashes loud rather than hanging silently.
+	reconcileCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := authz.Reconcile(reconcileCtx, conn); err != nil {
+		return fmt.Errorf("reconcile built-in roles: %w", err)
 	}
 
 	transactor := sqlstores.NewSQLTransactor(conn)
