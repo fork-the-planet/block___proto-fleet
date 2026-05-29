@@ -54,8 +54,13 @@ service CurtailmentService {
     rpc AdminTerminateEvent(AdminTerminateEventRequest)
         returns (AdminTerminateEventResponse);
 
-    // IngestCurtailmentSignal is reserved for v2 webhook ingestion.
-    // Proto3 cannot reserve service RPC names.
+    // IngestCurtailmentSignal starts a curtailment event from an
+    // external dispatch signal. signal_payload is provider-opaque;
+    // per-provider adapters decode it. Idempotent on
+    // (org_id, external_source, external_reference): replay during
+    // an in-flight event echoes, post-terminal fires fresh.
+    rpc IngestCurtailmentSignal(IngestCurtailmentSignalRequest)
+        returns (IngestCurtailmentSignalResponse);
 }
 
 // --- Enums ---
@@ -567,4 +572,47 @@ message AdminTerminateEventRequest {
 
 message AdminTerminateEventResponse {
     CurtailmentEvent event = 1;
+}
+
+message IngestCurtailmentSignalRequest {
+    // Provider identifier; must match a registered adapter. max_len is
+    // intentionally tighter than StartCurtailmentRequest.external_source
+    // (256) — provider names are short identifiers ("ercot-qse",
+    // "voltus", "openadr3"); the validator catches misconfigured callers.
+    string external_source = 1 [(buf.validate.field).string = {
+        min_len: 1
+        max_len: 64
+    }];
+
+    // Provider-assigned dispatch ID; forms the idempotency key with external_source.
+    string external_reference = 2 [(buf.validate.field).string = {
+        min_len: 1
+        max_len: 256
+    }];
+
+    // Raw provider payload; adapter decodes and validates.
+    bytes signal_payload = 3 [(buf.validate.field).bytes = {
+        min_len: 1
+        max_len: 65536
+    }];
+
+    // Optional scope override; adapter picks the default when unset.
+    oneof scope_override {
+        ScopeWholeOrg   whole_org_override          = 10;
+        ScopeDeviceSets device_set_ids_override     = 11;
+        ScopeDeviceList device_identifiers_override = 12;
+    }
+
+    // Operator-facing free text.
+    string reason = 20 [(buf.validate.field).string.max_len = 256];
+}
+
+message IngestCurtailmentSignalResponse {
+    CurtailmentEvent event = 1;
+
+    // True when a new event was inserted; false when an in-flight event was echoed.
+    bool created = 2;
+
+    // Soft adapter warnings; hard rejections return InvalidArgument instead.
+    repeated string adapter_warnings = 3;
 }

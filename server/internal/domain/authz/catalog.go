@@ -46,9 +46,11 @@ const (
 	// serverlog — admin server-side log viewer.
 	PermServerlogRead = "serverlog:read"
 
-	// curtailment — top-nav operational page.
+	// curtailment — top-nav operational page; :ingest is the machine-caller
+	// gate for IngestCurtailmentSignal.
 	PermCurtailmentRead   = "curtailment:read"
 	PermCurtailmentManage = "curtailment:manage"
+	PermCurtailmentIngest = "curtailment:ingest"
 
 	// fleetnode — top-nav admin operations.
 	PermFleetnodeRead   = "fleetnode:read"
@@ -127,6 +129,7 @@ var catalog = []CatalogEntry{
 
 	{PermCurtailmentRead, "View curtailment policies and preview impact.", ResourceCurtailment},
 	{PermCurtailmentManage, "Create, edit, and delete curtailment policies.", ResourceCurtailment},
+	{PermCurtailmentIngest, "Accept curtailment dispatch signals from external providers (QSE bridge, aggregator, OpenADR VTN).", ResourceCurtailment},
 
 	{PermFleetnodeRead, "View fleet-node state.", ResourceFleetNode},
 	{PermFleetnodeManage, "Perform fleet-node admin operations.", ResourceFleetNode},

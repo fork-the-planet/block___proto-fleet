@@ -72,12 +72,14 @@ var ProcedurePermissions = map[string]string{
 	buildingsv1connect.BuildingServiceDeleteBuildingProcedure:       authz.PermSiteManage,
 	buildingsv1connect.BuildingServiceAssignRackToBuildingProcedure: authz.PermSiteManage,
 
-	// CurtailmentService — reads + AdminTerminateEvent + UpdateCurtailmentEvent.
-	// Start/Stop/Preview retain conditional inline gates pending a redesign.
-	curtailmentv1connect.CurtailmentServiceListCurtailmentEventsProcedure:  authz.PermCurtailmentRead,
-	curtailmentv1connect.CurtailmentServiceGetActiveCurtailmentProcedure:   authz.PermCurtailmentRead,
-	curtailmentv1connect.CurtailmentServiceUpdateCurtailmentEventProcedure: authz.PermCurtailmentManage,
-	curtailmentv1connect.CurtailmentServiceAdminTerminateEventProcedure:    authz.PermCurtailmentManage,
+	// CurtailmentService — reads + AdminTerminateEvent + UpdateCurtailmentEvent
+	// + IngestCurtailmentSignal. Start/Stop/Preview retain conditional inline
+	// gates pending the broader curtailment authz redesign.
+	curtailmentv1connect.CurtailmentServiceListCurtailmentEventsProcedure:   authz.PermCurtailmentRead,
+	curtailmentv1connect.CurtailmentServiceGetActiveCurtailmentProcedure:    authz.PermCurtailmentRead,
+	curtailmentv1connect.CurtailmentServiceUpdateCurtailmentEventProcedure:  authz.PermCurtailmentManage,
+	curtailmentv1connect.CurtailmentServiceAdminTerminateEventProcedure:     authz.PermCurtailmentManage,
+	curtailmentv1connect.CurtailmentServiceIngestCurtailmentSignalProcedure: authz.PermCurtailmentIngest,
 
 	// DeviceCollectionService — rack:read for reads, rack:manage for writes.
 	// Collections are the legacy name for racks; the wire surface still
