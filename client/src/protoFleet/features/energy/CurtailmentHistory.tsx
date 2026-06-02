@@ -276,10 +276,11 @@ function CurtailmentSummaryModal({
   onStop,
   stopDisabled,
 }: CurtailmentSummaryModalProps): ReactElement {
-  const startedAt = formatDateTime(event.startedAt);
-  const endedAt = formatDateTime(event.endedAt);
-  const scheduledAt = formatDateTime(event.scheduledAt);
   const createdAt = formatDateTime(event.createdAt);
+  const endedAt = formatDateTime(event.endedAt);
+  // Ended events can lack startedAt from the backend; use createdAt so completed history never reads as unstarted.
+  const startedAt = formatDateTime(event.startedAt) ?? (endedAt ? createdAt : undefined);
+  const scheduledAt = formatDateTime(event.scheduledAt);
   const eventStateConfig = getHistoryEventStateConfig(event);
   const buttons: CurtailmentSummaryModalButton[] = [];
 
@@ -318,10 +319,9 @@ function CurtailmentSummaryModal({
           <DetailRow label="ID" value={event.id} />
           <DetailRow label="Applies to" value={event.scopeLabel} secondary={formatMinerCount(event.selectedMiners)} />
           <DetailRow label="Power target vs actual" value={formatTargetVsActual(event)} />
-          <DetailRow label="Status" value={eventStateConfig.label} secondary={getHistoryStatusDetail(event)} />
+          <DetailRow label="Status" value={eventStateConfig.label} />
           <DetailRow label="Started" value={startedAt ?? "Not started yet"} />
           {scheduledAt ? <DetailRow label="Scheduled" value={scheduledAt} /> : null}
-          {createdAt ? <DetailRow label="Created" value={createdAt} /> : null}
           {endedAt ? <DetailRow label="Ended" value={endedAt} /> : null}
           <DetailRow label="Type" value={priorityLabels[event.priority]} />
           <DetailRow label="Source" value={event.sourceLabel} />

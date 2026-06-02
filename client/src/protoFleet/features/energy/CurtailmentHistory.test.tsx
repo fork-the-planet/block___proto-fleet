@@ -5,6 +5,13 @@ import userEvent from "@testing-library/user-event";
 import CurtailmentHistory from "@/protoFleet/features/energy/CurtailmentHistory";
 import { mockCurtailmentHistoryEvents } from "@/protoFleet/features/energy/CurtailmentHistory.fixtures";
 
+const testDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 function getRenderedRows(): HTMLElement[] {
   return screen.queryAllByTestId(/^curtailment-history-row-/);
 }
@@ -174,6 +181,31 @@ describe("CurtailmentHistory", () => {
 
     expect(within(modal).getByRole("button", { name: "Stop curtailment" })).toBeDisabled();
     expect(onStopActiveEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the created time as the started detail for ended events missing startedAt", async () => {
+    const user = userEvent.setup();
+    const completedEvent = {
+      ...mockCurtailmentHistoryEvents[0],
+      id: "curt-created-started-detail",
+      reason: "Completed curtailment",
+      state: "completed" as const,
+      startedAt: "",
+      createdAt: "2026-04-30T13:56:00-04:00",
+      endedAt: "2026-04-30T14:12:00-04:00",
+    };
+    const expectedCreatedAt = testDateTimeFormatter.format(new Date(completedEvent.createdAt));
+
+    render(<CurtailmentHistory events={[completedEvent]} />);
+
+    await user.click(screen.getByTestId("curtailment-history-row-curt-created-started-detail"));
+
+    const modal = screen.getByTestId("modal");
+    expect(within(modal).getByText("Started")).toBeInTheDocument();
+    expect(within(modal).getByText(expectedCreatedAt)).toBeInTheDocument();
+    expect(within(modal).queryByText("Not started yet")).not.toBeInTheDocument();
+    expect(within(modal).queryByText("Created")).not.toBeInTheDocument();
+    expect(within(modal).queryByText(`Created ${expectedCreatedAt}`)).not.toBeInTheDocument();
   });
 
   it("renders injected active rows with their display state", async () => {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 
@@ -6,7 +6,10 @@ import type { UseCurtailmentApiResult } from "@/protoFleet/api/useCurtailmentApi
 import type { ActiveCurtailmentEvent } from "@/protoFleet/features/energy/ActiveCurtailmentStatus";
 import type { CurtailmentHistoryEvent } from "@/protoFleet/features/energy/CurtailmentHistory";
 import CurtailmentManagementPanel from "@/protoFleet/features/energy/CurtailmentManagementPanel";
-import type { CurtailmentSubmitValues } from "@/protoFleet/features/energy/CurtailmentStartModal";
+import type {
+  CurtailmentPlanPreview,
+  CurtailmentSubmitValues,
+} from "@/protoFleet/features/energy/CurtailmentStartModal";
 
 const mocks = vi.hoisted(() => ({
   dismissTerminalCurtailment: vi.fn(),
@@ -41,9 +44,11 @@ vi.mock("@/protoFleet/features/energy/ActiveCurtailmentStatus", () => ({
       <button type="button" onClick={onDismissRestored}>
         Dismiss restored
       </button>
-      <button type="button" onClick={onRequestEdit}>
-        Request edit
-      </button>
+      {onRequestEdit ? (
+        <button type="button" onClick={onRequestEdit}>
+          Request edit
+        </button>
+      ) : null}
       <button type="button" onClick={onRequestRestore}>
         Request restore
       </button>
@@ -102,14 +107,21 @@ vi.mock("@/protoFleet/features/energy/CurtailmentStartModal", () => ({
     mode,
     onStopCurtailment,
     onSubmit,
+    preview,
   }: {
     initialValues?: Partial<CurtailmentSubmitValues>;
     mode?: string;
     onStopCurtailment?: () => void;
     onSubmit: (values: CurtailmentSubmitValues) => void;
+    preview?: CurtailmentPlanPreview;
   }) => (
     <div role="dialog" aria-label={mode === "edit" ? "Manage curtailment" : "Plan curtailment"}>
       <div data-testid="modal-initial-reason">{initialValues?.reason ?? ""}</div>
+      <div data-testid="modal-preview">
+        {preview
+          ? `${preview.selectedMinerCount} miners, ${preview.targetKw} kW target, ${preview.estimatedReductionKw} kW estimated`
+          : ""}
+      </div>
       <button type="button" onClick={() => onSubmit(mocks.submitValues as CurtailmentSubmitValues)}>
         Submit {mode === "edit" ? "edit" : "plan"}
       </button>
@@ -132,8 +144,31 @@ vi.mock("@/protoFleet/features/energy/CurtailmentStopConfirmationDialog", () => 
   ),
 }));
 
-const activeEvent = { reason: "Grid peak" } as ActiveCurtailmentEvent;
-const activeEventFormValues = { reason: "Grid peak", targetKw: "5" } as CurtailmentSubmitValues;
+const activeEvent = {
+  reason: "Grid peak",
+  state: "active",
+  selectedMiners: 2,
+  targetKw: 5,
+  estimatedReductionKw: 6.2,
+} as ActiveCurtailmentEvent;
+const activeEventFormValues = {
+  reason: "Grid peak",
+  scopeType: "wholeOrg",
+  scopeId: "whole-org",
+  deviceSetIds: [],
+  deviceIdentifiers: [],
+  responseProfileId: "customPlan",
+  curtailmentMode: "fixedKwReduction",
+  minerSelectionStrategy: "leastEfficientFirst",
+  targetKw: "5",
+  toleranceKw: "",
+  priority: "normal",
+  minDurationSec: "60",
+  maxDurationSec: "300",
+  restoreBatchSize: "1",
+  restoreIntervalSec: "60",
+  includeMaintenance: true,
+} satisfies CurtailmentSubmitValues;
 const historyEvent = { id: "curt-1" } as CurtailmentHistoryEvent;
 
 const emptySnapshot = {
@@ -254,7 +289,7 @@ describe("CurtailmentManagementPanel", () => {
     const user = userEvent.setup();
     mocks.useCurtailmentApi.mockReturnValue(
       createApiResult({
-        activeEvent,
+        activeEvent: { ...activeEvent, state: "completed" },
         activeEventId: "curt-1",
       }),
     );
@@ -264,6 +299,95 @@ describe("CurtailmentManagementPanel", () => {
     await user.click(screen.getByRole("button", { name: "Dismiss restored" }));
 
     expect(mocks.dismissTerminalCurtailment).toHaveBeenCalledOnce();
+  });
+
+  it("skips overlapping active curtailment polls while a background refresh is still in flight", async () => {
+    vi.useFakeTimers();
+    const pollingSignals: AbortSignal[] = [];
+    let resolvePollingRefresh: (value: typeof emptySnapshot) => void = () => undefined;
+    mocks.refreshCurtailment.mockImplementation((options = {}) => {
+      if (options.background && options.signal) {
+        pollingSignals.push(options.signal);
+        return new Promise((resolve) => {
+          resolvePollingRefresh = resolve;
+        });
+      }
+      return Promise.resolve(emptySnapshot);
+    });
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent: { ...activeEvent, state: "restoring" },
+        activeEventId: "curt-1",
+      }),
+    );
+
+    try {
+      render(<CurtailmentManagementPanel />);
+
+      expect(mocks.refreshCurtailment).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(mocks.refreshCurtailment).toHaveBeenCalledWith({
+        background: true,
+        signal: expect.any(AbortSignal),
+      });
+      expect(pollingSignals).toHaveLength(1);
+      expect(pollingSignals[0].aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(pollingSignals).toHaveLength(1);
+      expect(pollingSignals[0].aborted).toBe(false);
+
+      resolvePollingRefresh(emptySnapshot);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(pollingSignals).toHaveLength(2);
+      expect(pollingSignals[0].aborted).toBe(false);
+      expect(pollingSignals[1].aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets user-driven history navigation supersede active polling", async () => {
+    vi.useFakeTimers();
+    const pollingSignals: AbortSignal[] = [];
+    mocks.refreshCurtailment.mockImplementation((options = {}) => {
+      if (options.background && options.signal) {
+        pollingSignals.push(options.signal);
+        return new Promise(() => {});
+      }
+      return Promise.resolve(emptySnapshot);
+    });
+    mocks.goToHistoryPage.mockReturnValue(new Promise(() => {}));
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent: { ...activeEvent, state: "restoring" },
+        activeEventId: "curt-1",
+      }),
+    );
+
+    try {
+      render(<CurtailmentManagementPanel />);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(pollingSignals).toHaveLength(1);
+      expect(pollingSignals[0].aborted).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "Load page 2" }));
+
+      expect(mocks.goToHistoryPage).toHaveBeenCalledWith(2, { signal: expect.any(AbortSignal) });
+      expect(pollingSignals[0].aborted).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(pollingSignals).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("opens active curtailment management and submits updates", async () => {
@@ -282,6 +406,7 @@ describe("CurtailmentManagementPanel", () => {
 
     expect(screen.getByRole("dialog", { name: "Manage curtailment" })).toBeInTheDocument();
     expect(screen.getByTestId("modal-initial-reason")).toHaveTextContent("Grid peak");
+    expect(screen.getByTestId("modal-preview")).toHaveTextContent("2 miners, 5 kW target, 6.2 kW estimated");
 
     await user.click(screen.getByRole("button", { name: "Submit edit" }));
 
@@ -289,6 +414,22 @@ describe("CurtailmentManagementPanel", () => {
       expect(mocks.updateCurtailment).toHaveBeenCalledWith("curt-1", mocks.submitValues, activeEventFormValues),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage curtailment" })).not.toBeInTheDocument());
+  });
+
+  it("hides active curtailment management for read-only users", () => {
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+      }),
+    );
+
+    render(<CurtailmentManagementPanel canManageCurtailment={false} />);
+
+    expect(screen.getByTestId("active-curtailment-status")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request edit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plan curtailment" })).toBeInTheDocument();
   });
 
   it("keeps the edit baseline stable after active event refreshes", async () => {
