@@ -13,12 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/block/proto-fleet/server/generated/grpc/curtailment/v1"
+	"github.com/block/proto-fleet/server/internal/domain/authz"
 	"github.com/block/proto-fleet/server/internal/domain/curtailment"
 	"github.com/block/proto-fleet/server/internal/domain/curtailment/models"
 	"github.com/block/proto-fleet/server/internal/domain/curtailment/modes"
 	"github.com/block/proto-fleet/server/internal/domain/fleeterror"
 	"github.com/block/proto-fleet/server/internal/domain/session"
 	"github.com/block/proto-fleet/server/internal/domain/stores/interfaces"
+	"github.com/block/proto-fleet/server/internal/handlers/middleware"
 )
 
 // startStubStore implements interfaces.CurtailmentStore for handler-level
@@ -191,6 +193,27 @@ func validStartRequestBuilder() *pb.StartCurtailmentRequest {
 	}
 }
 
+func startSessionCtxWithPerms(t *testing.T, orgID int64, role string, perms ...string) context.Context {
+	t.Helper()
+	return startSessionInfoCtxWithPerms(t, &session.Info{
+		AuthMethod:     session.AuthMethodSession,
+		OrganizationID: orgID,
+		UserID:         9,
+		Role:           role,
+		SessionID:      "sess-start-perms",
+	}, perms...)
+}
+
+func startSessionInfoCtxWithPerms(t *testing.T, info *session.Info, perms ...string) context.Context {
+	t.Helper()
+	ctx := authn.SetInfo(t.Context(), info)
+	return middleware.WithEffectivePermissions(ctx, authz.NewEffectivePermissions([]authz.Assignment{{
+		AssignmentID: 1,
+		ScopeType:    authz.ScopeOrg,
+		Permissions:  perms,
+	}}))
+}
+
 // TestHandler_StartCurtailment_HappyPath: with a stubbed service, a valid
 // session, and ample candidates, Start returns the populated event with
 // EventUuid set and pending targets echoed back.
@@ -204,13 +227,13 @@ func TestHandler_StartCurtailment_HappyPath(t *testing.T) {
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 42,
 		UserID:         9,
 		Role:           "OPERATOR",
 		SessionID:      "sess-abc",
-	})
+	}, authz.PermCurtailmentManage)
 
 	resp, err := h.StartCurtailment(ctx, connect.NewRequest(validStartRequestBuilder()))
 	require.NoError(t, err)
@@ -245,6 +268,107 @@ func TestHandler_StartCurtailment_HappyPath(t *testing.T) {
 	// echoed in the Start response. Two selected candidates with no caller
 	// preference clamps to the minimum floor (10).
 	assert.Equal(t, uint32(10), ev.EffectiveBatchSize)
+}
+
+func TestHandler_StartCurtailment_RequiresCurtailmentManage(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		mutateReq   func(*pb.StartCurtailmentRequest)
+		permissions []string
+		wantMode    models.Mode
+		wantCode    connect.Code
+		wantPersist bool
+	}{
+		{
+			name:        "fixed kw whole org without manage is rejected",
+			permissions: []string{authz.PermCurtailmentRead},
+			wantMode:    models.ModeFixedKw,
+			wantCode:    connect.CodePermissionDenied,
+		},
+		{
+			name:        "empty permissions set is rejected",
+			permissions: nil,
+			wantMode:    models.ModeFixedKw,
+			wantCode:    connect.CodePermissionDenied,
+		},
+		{
+			name: "full fleet whole org without manage is rejected",
+			mutateReq: func(req *pb.StartCurtailmentRequest) {
+				req.Mode = pb.CurtailmentMode_CURTAILMENT_MODE_FULL_FLEET
+				req.ModeParams = nil
+			},
+			permissions: []string{authz.PermCurtailmentRead},
+			wantMode:    models.ModeFullFleet,
+			wantCode:    connect.CodePermissionDenied,
+		},
+		{
+			name: "full fleet explicit device list without manage is rejected",
+			mutateReq: func(req *pb.StartCurtailmentRequest) {
+				req.Scope = &pb.StartCurtailmentRequest_DeviceIdentifiers{
+					DeviceIdentifiers: &pb.ScopeDeviceList{DeviceIdentifiers: []string{"eligible"}},
+				}
+				req.Mode = pb.CurtailmentMode_CURTAILMENT_MODE_FULL_FLEET
+				req.ModeParams = nil
+			},
+			permissions: []string{authz.PermCurtailmentRead},
+			wantMode:    models.ModeFullFleet,
+			wantCode:    connect.CodePermissionDenied,
+		},
+		{
+			name:        "fixed kw whole org with manage can start",
+			permissions: []string{authz.PermCurtailmentManage},
+			wantMode:    models.ModeFixedKw,
+			wantPersist: true,
+		},
+		{
+			name: "full fleet whole org with manage can start",
+			mutateReq: func(req *pb.StartCurtailmentRequest) {
+				req.Mode = pb.CurtailmentMode_CURTAILMENT_MODE_FULL_FLEET
+				req.ModeParams = nil
+			},
+			permissions: []string{authz.PermCurtailmentManage},
+			wantMode:    models.ModeFullFleet,
+			wantPersist: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newStartStubStore()
+			store.candidates = []*models.Candidate{
+				miner("eligible", "ACTIVE", "PAIRED", 6000, 100, 40),
+			}
+			h := NewHandler(curtailment.NewService(store))
+
+			req := validStartRequestBuilder()
+			if tc.mutateReq != nil {
+				tc.mutateReq(req)
+			}
+
+			_, err := h.StartCurtailment(
+				startSessionCtxWithPerms(t, 1, "OPERATOR", tc.permissions...),
+				connect.NewRequest(req),
+			)
+
+			if tc.wantPersist {
+				require.NoError(t, err)
+				assert.Equal(t, tc.wantMode, store.lastEvent.Mode)
+				assert.Len(t, store.lastTargets, 1)
+				return
+			}
+
+			require.Error(t, err)
+			var fleetErr fleeterror.FleetError
+			require.ErrorAs(t, err, &fleetErr)
+			assert.Equal(t, tc.wantCode, fleetErr.GRPCCode)
+			assert.Zero(t, store.lastEvent.OrgID, "permission gate must fail before persistence")
+			assert.Empty(t, store.lastTargets, "permission gate must fail before target selection persists")
+		})
+	}
 }
 
 func TestHandler_StartCurtailment_IdempotentReplayRendersPersistedEvent(t *testing.T) {
@@ -282,13 +406,13 @@ func TestHandler_StartCurtailment_IdempotentReplayRendersPersistedEvent(t *testi
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 42,
 		UserID:         9,
 		Role:           "OPERATOR",
 		SessionID:      "sess-abc",
-	})
+	}, authz.PermCurtailmentManage)
 	req := validStartRequestBuilder()
 	req.Reason = "changed retry reason"
 	req.IdempotencyKey = "retry-key"
@@ -319,13 +443,13 @@ func TestHandler_StartCurtailment_APIKeyDerivesAPIKeyActor(t *testing.T) {
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodAPIKey,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "OPERATOR",
 		APIKeyID:       "key-77",
-	})
+	}, authz.PermCurtailmentManage)
 
 	_, err := h.StartCurtailment(ctx, connect.NewRequest(validStartRequestBuilder()))
 	require.NoError(t, err)
@@ -349,12 +473,12 @@ func TestHandler_StartCurtailment_InsufficientLoadSurfacesAsInvalidArgument(t *t
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "OPERATOR",
-	})
+	}, authz.PermCurtailmentManage)
 
 	req := validStartRequestBuilder()
 	req.ModeParams = &pb.StartCurtailmentRequest_FixedKw{
@@ -400,12 +524,12 @@ func TestHandler_StartCurtailment_OverrideRoleGateBlocksNonAdmin(t *testing.T) {
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "VIEWER",
-	})
+	}, authz.PermCurtailmentManage)
 
 	req := validStartRequestBuilder()
 	req.CandidateMinPowerWOverride = ptr(uint32(800))
@@ -432,13 +556,13 @@ func TestHandler_StartCurtailment_ZeroMaxDurationUsesOrgDefault(t *testing.T) {
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "OPERATOR",
 		SessionID:      "sess-zero-dur",
-	})
+	}, authz.PermCurtailmentManage)
 
 	req := validStartRequestBuilder()
 	req.MaxDurationSeconds = 0 // sentinel: use org default.
@@ -461,12 +585,12 @@ func TestHandler_StartCurtailment_AllowUnboundedAdminPersistsNullDuration(t *tes
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "ADMIN",
-	})
+	}, authz.PermCurtailmentManage)
 
 	req := validStartRequestBuilder()
 	req.MaxDurationSeconds = 0
@@ -491,12 +615,12 @@ func TestHandler_StartCurtailment_RejectsAllowUnboundedWithMaxDuration(t *testin
 	}
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "ADMIN",
-	})
+	}, authz.PermCurtailmentManage)
 
 	req := validStartRequestBuilder()
 	req.AllowUnbounded = true
@@ -534,13 +658,13 @@ func TestHandler_StartCurtailment_RejectsUint32Overflow(t *testing.T) {
 			t.Parallel()
 			store := newStartStubStore()
 			h := NewHandler(curtailment.NewService(store))
-			ctx := authn.SetInfo(t.Context(), &session.Info{
+			ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 				AuthMethod:     session.AuthMethodSession,
 				OrganizationID: 1,
 				UserID:         9,
 				Role:           "OPERATOR",
 				SessionID:      "sess",
-			})
+			}, authz.PermCurtailmentManage)
 
 			req := validStartRequestBuilder()
 			tc.mut(req)
@@ -564,12 +688,12 @@ func TestHandler_StartCurtailment_OutcomeMirrorsInsufficientLoadShapeOnZeroPool(
 	store.candidates = nil
 	h := NewHandler(curtailment.NewService(store))
 
-	ctx := authn.SetInfo(t.Context(), &session.Info{
+	ctx := startSessionInfoCtxWithPerms(t, &session.Info{
 		AuthMethod:     session.AuthMethodSession,
 		OrganizationID: 1,
 		UserID:         9,
 		Role:           "OPERATOR",
-	})
+	}, authz.PermCurtailmentManage)
 
 	_, err := h.StartCurtailment(ctx, connect.NewRequest(validStartRequestBuilder()))
 	require.Error(t, err)
