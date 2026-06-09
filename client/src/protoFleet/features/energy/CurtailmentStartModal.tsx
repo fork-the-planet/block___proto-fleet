@@ -21,11 +21,12 @@ import Checkbox from "@/shared/components/Checkbox";
 import Dialog, { DialogIcon } from "@/shared/components/Dialog";
 import Input from "@/shared/components/Input";
 import ProgressCircular from "@/shared/components/ProgressCircular";
+import Select from "@/shared/components/Select";
 
 export type CurtailmentPriority = "normal" | "emergency";
 export type CurtailmentScopeType = "wholeOrg" | "deviceSet" | "explicitMiners";
 export type ResponseProfileId = "customPlan";
-export type CurtailmentMode = "fixedKwReduction";
+export type CurtailmentMode = "fixedKwReduction" | "fullFleet";
 export type MinerSelectionStrategy = "leastEfficientFirst";
 export type CurtailmentStartModalMode = "create" | "edit";
 
@@ -129,6 +130,14 @@ const defaultValues: CurtailmentFormValues = {
   includeMaintenance: true,
 };
 const editableCurtailmentFields: EditableCurtailmentField[] = ["reason", "maxDurationSec", "restoreIntervalSec"];
+const curtailmentModeOptions = [
+  { value: "fixedKwReduction", label: "Fixed kW reduction" },
+  { value: "fullFleet", label: "Full shutdown" },
+];
+
+function isCurtailmentMode(value: string): value is CurtailmentMode {
+  return value === "fixedKwReduction" || value === "fullFleet";
+}
 
 function getInitialValues(initialValues?: Partial<CurtailmentFormValues>): CurtailmentFormValues {
   return {
@@ -255,8 +264,14 @@ function validateCurtailmentFormValues(
     return localErrors;
   }
 
-  const targetKw = parseRequiredPositiveNumberField(values.targetKw, "a target reduction");
-  const toleranceKw = parseOptionalNonNegativeNumberField(values.toleranceKw, "a tolerance");
+  const targetKw =
+    values.curtailmentMode === "fixedKwReduction"
+      ? parseRequiredPositiveNumberField(values.targetKw, "a target reduction")
+      : {};
+  const toleranceKw =
+    values.curtailmentMode === "fixedKwReduction"
+      ? parseOptionalNonNegativeNumberField(values.toleranceKw, "a tolerance")
+      : {};
   const restoreBatchSize = parseOptionalUint32Field(values.restoreBatchSize, {
     label: "batch size",
     max: curtailmentNumericFieldLimits.restoreBatchSize,
@@ -498,12 +513,18 @@ function CurtailmentStartModalContent({
 
   const hasBlockingValidationError =
     previewState.previewError !== undefined ||
+    previewState.isPreviewLoading ||
     Object.keys(localErrors).length > 0 ||
     Object.keys(errors ?? {}).length > 0;
   const hasEditableChanges = !isEditMode || hasEditableCurtailmentChanges(values, initialFormValues);
   const isSubmitDisabled = hasBlockingValidationError || !hasEditableChanges;
   const selectedMinerIds = getSelectedMinerIds(values);
   const applyToTarget = getApplyToTarget(values, isEditMode, previewState.preview?.selectedMinerCount);
+  const isFullFleetMode = values.curtailmentMode === "fullFleet";
+  const curtailmentBehaviorSubtext = isEditMode
+    ? undefined
+    : "Fleet will automatically curtail the least efficient miners first.";
+  const curtailmentTargetGridClassName = isFullFleetMode ? "grid gap-3" : "grid gap-3 tablet:grid-cols-2";
   const shouldShowPreviewPane =
     !isEditMode || previewState.preview !== undefined || previewState.previewError !== undefined;
   const previewPane = shouldShowPreviewPane ? <PreviewPane {...previewState} /> : null;
@@ -600,20 +621,35 @@ function CurtailmentStartModalContent({
               onChange={(value) => updateValue("reason", value)}
             />
 
-            <Section
-              title="Curtail behavior"
-              subtext={isEditMode ? undefined : "Fleet will automatically curtail the least efficient miners first."}
-            >
+            <Section title="Curtail behavior" subtext={curtailmentBehaviorSubtext}>
               <div className="grid gap-3">
-                <Input
-                  id="curtailment-target-kw"
-                  label="Fixed target reduction (kW)"
-                  initValue={values.targetKw}
-                  disabled={isEditMode}
-                  inputMode="decimal"
-                  error={effectiveErrors.targetKw}
-                  onChange={(value) => updateValue("targetKw", value)}
-                />
+                <div className={curtailmentTargetGridClassName}>
+                  <Select
+                    id="curtailment-mode"
+                    label="Curtailment mode"
+                    value={values.curtailmentMode}
+                    options={curtailmentModeOptions}
+                    disabled={isEditMode}
+                    forceBelow
+                    showSelectedIndicator={false}
+                    onChange={(value) => {
+                      if (isCurtailmentMode(value)) {
+                        updateValue("curtailmentMode", value);
+                      }
+                    }}
+                  />
+                  {!isFullFleetMode ? (
+                    <Input
+                      id="curtailment-target-kw"
+                      label="Fixed target reduction (kW)"
+                      initValue={values.targetKw}
+                      disabled={isEditMode}
+                      inputMode="decimal"
+                      error={effectiveErrors.targetKw}
+                      onChange={(value) => updateValue("targetKw", value)}
+                    />
+                  ) : null}
+                </div>
                 <div className="grid gap-3 tablet:grid-cols-2">
                   <Input
                     id="curtailment-min-duration"

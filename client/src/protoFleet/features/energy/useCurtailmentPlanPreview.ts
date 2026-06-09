@@ -29,6 +29,7 @@ type CurtailmentPlanPreviewRequestValues = Pick<
   | "scopeId"
   | "deviceSetIds"
   | "deviceIdentifiers"
+  | "curtailmentMode"
   | "targetKw"
   | "toleranceKw"
   | "priority"
@@ -137,10 +138,25 @@ function buildScope(values: CurtailmentPlanPreviewRequestValues): PreviewCurtail
 export function buildPreviewCurtailmentPlanRequest(
   values: CurtailmentPlanPreviewRequestValues,
 ): PreviewCurtailmentPlanRequest | undefined {
-  const targetKw = parsePositiveNumber(values.targetKw);
   const scope = buildScope(values);
 
-  if (targetKw === undefined || scope === undefined) {
+  if (scope === undefined) {
+    return undefined;
+  }
+
+  if (values.curtailmentMode === "fullFleet") {
+    return create(PreviewCurtailmentPlanRequestSchema, {
+      scope,
+      mode: CurtailmentMode.FULL_FLEET,
+      priority: toApiPriority(values.priority),
+      includeMaintenance: values.includeMaintenance,
+      forceIncludeMaintenance: values.includeMaintenance,
+    });
+  }
+
+  const targetKw = parsePositiveNumber(values.targetKw);
+
+  if (targetKw === undefined) {
     return undefined;
   }
 
@@ -262,10 +278,12 @@ export function createCurtailmentPlanPreview(
   source: CurtailmentPlanPreviewSource,
 ): CurtailmentPlanPreview {
   const selectedMinerCount = Number.isFinite(source.selectedMinerCount) ? source.selectedMinerCount : 0;
-  const targetKw =
-    source.targetKw !== undefined && Number.isFinite(source.targetKw)
-      ? source.targetKw
+  const fallbackTargetKw =
+    values.curtailmentMode === "fullFleet" && Number.isFinite(source.estimatedReductionKw)
+      ? source.estimatedReductionKw
       : (parsePositiveNumber(values.targetKw) ?? 0);
+  const targetKw =
+    source.targetKw !== undefined && Number.isFinite(source.targetKw) ? source.targetKw : fallbackTargetKw;
   const estimatedReductionKw = Number.isFinite(source.estimatedReductionKw) ? source.estimatedReductionKw : targetKw;
 
   return {
@@ -283,10 +301,15 @@ function toCurtailmentPlanPreview(
   values: CurtailmentFormValues,
 ): CurtailmentPlanPreview {
   const fixedKw = response.modeParams.case === "fixedKw" ? response.modeParams.value : undefined;
+  const targetKw =
+    fixedKw?.targetKw ??
+    (values.curtailmentMode === "fullFleet" && Number.isFinite(response.estimatedReductionKw)
+      ? response.estimatedReductionKw
+      : undefined);
 
   return createCurtailmentPlanPreview(values, {
     selectedMinerCount: response.candidates.length,
-    targetKw: fixedKw?.targetKw,
+    targetKw,
     estimatedReductionKw: response.estimatedReductionKw,
   });
 }
@@ -305,6 +328,7 @@ export function useCurtailmentPlanPreview({
       scopeId: values.scopeId,
       deviceSetIds: values.deviceSetIds,
       deviceIdentifiers: values.deviceIdentifiers,
+      curtailmentMode: values.curtailmentMode,
       targetKw: values.targetKw,
       toleranceKw: values.toleranceKw,
       priority: values.priority,
@@ -313,6 +337,7 @@ export function useCurtailmentPlanPreview({
     [
       values.deviceSetIds,
       values.deviceIdentifiers,
+      values.curtailmentMode,
       values.includeMaintenance,
       values.priority,
       values.scopeId,
@@ -424,9 +449,10 @@ export function useCurtailmentPlanPreview({
     };
   }
 
-  const hasCurrentPreviewState = requestState !== undefined && state.requestKey === requestState.requestKey;
-  const renderableResponse = requestState !== undefined ? state.response : undefined;
   const hasCurrentResponse = requestState !== undefined && state.responseRequestKey === requestState.requestKey;
+  const hasCurrentPreviewState = requestState !== undefined && state.requestKey === requestState.requestKey;
+  const isCurrentPreviewLoading = requestState !== undefined && (!hasCurrentPreviewState || state.isPreviewLoading);
+  const renderableResponse = hasCurrentResponse ? state.response : undefined;
   const previewValues =
     hasCurrentResponse || state.responseRequestValues === undefined
       ? values
@@ -435,6 +461,6 @@ export function useCurtailmentPlanPreview({
   return {
     preview: renderableResponse !== undefined ? toCurtailmentPlanPreview(renderableResponse, previewValues) : undefined,
     previewError: hasCurrentPreviewState ? state.previewError : undefined,
-    isPreviewLoading: hasCurrentPreviewState ? state.isPreviewLoading : false,
+    isPreviewLoading: isCurrentPreviewLoading,
   };
 }

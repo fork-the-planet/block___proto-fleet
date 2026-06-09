@@ -85,6 +85,16 @@ export const WithPreview: Story = {
   render: () => <ModalStory initialValues={configuredValues} preview={preview} />,
 };
 
+export const FullFleet: Story = {
+  name: "Full shutdown preview",
+  render: () => (
+    <ModalStory
+      initialValues={{ ...configuredValues, curtailmentMode: "fullFleet", targetKw: "" }}
+      preview={{ ...preview, targetKw: 45 }}
+    />
+  ),
+};
+
 export const EditMode: Story = {
   name: "Edit mode",
   render: () => <ModalStory initialValues={configuredValues} preview={preview} mode="edit" />,
