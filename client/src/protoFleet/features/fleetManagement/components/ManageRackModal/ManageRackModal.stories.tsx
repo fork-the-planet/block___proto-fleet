@@ -74,7 +74,7 @@ const MockRackPane = ({ rows, cols }: { rows: number; cols: number }) => (
   </div>
 );
 
-type AssignMinersModalStoryProps = {
+type ManageRackModalStoryProps = {
   infoMessage: string;
   isLoading?: boolean;
   showError?: boolean;
@@ -83,14 +83,14 @@ type AssignMinersModalStoryProps = {
   cols?: number;
 };
 
-const AssignMinersModalStory = ({
+const ManageRackModalStory = ({
   infoMessage,
   isLoading = false,
   showError = false,
   rackLabel = "Rack A-01",
   rows = 4,
   cols = 5,
-}: AssignMinersModalStoryProps) => {
+}: ManageRackModalStoryProps) => {
   const [open, setOpen] = useState(true);
 
   if (!open) {
@@ -169,13 +169,13 @@ const AssignMinersModalStory = ({
 };
 
 const meta = {
-  title: "Proto Fleet/Rack Management/AssignMinersModal",
-  component: AssignMinersModalStory,
+  title: "Proto Fleet/Rack Management/ManageRackModal",
+  component: ManageRackModalStory,
   parameters: {
     layout: "fullscreen",
   },
   tags: ["autodocs"],
-} satisfies Meta<typeof AssignMinersModalStory>;
+} satisfies Meta<typeof ManageRackModalStory>;
 
 export default meta;
 
@@ -183,27 +183,27 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   args: {
-    infoMessage: "Assign miners modal with mock miner list and rack grid. Uses full-width layout (no max-width).",
+    infoMessage: "Manage rack modal with mock miner list and rack grid. Uses full-width layout (no max-width).",
   },
 };
 
 export const Loading: Story = {
   args: {
-    infoMessage: "Assign miners modal in loading state while fetching existing rack data.",
+    infoMessage: "Manage rack modal in loading state while fetching existing rack data.",
     isLoading: true,
   },
 };
 
 export const WithError: Story = {
   args: {
-    infoMessage: "Assign miners modal showing an error callout above the panes.",
+    infoMessage: "Manage rack modal showing an error callout above the panes.",
     showError: true,
   },
 };
 
 export const LargeRack: Story = {
   args: {
-    infoMessage: "Assign miners modal with a larger rack configuration (6 rows x 8 columns).",
+    infoMessage: "Manage rack modal with a larger rack configuration (6 rows x 8 columns).",
     rackLabel: "Rack B-03",
     rows: 6,
     cols: 8,

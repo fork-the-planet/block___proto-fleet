@@ -17,17 +17,14 @@ import ParentPickerModal from "@/protoFleet/components/ParentPickerModal";
 import { MULTI_SITE_ENABLED } from "@/protoFleet/constants/featureFlags";
 import { POLL_INTERVAL_MS } from "@/protoFleet/constants/polling";
 import FleetGroupActionsMenu from "@/protoFleet/features/fleetManagement/components/FleetGroupActionsMenu";
-import {
-  AssignMinersModal,
-  type RackFormData,
-} from "@/protoFleet/features/rackManagement/components/AssignMinersModal";
-import { RackCard } from "@/protoFleet/features/rackManagement/components/RackCard";
-import RackSettingsModal from "@/protoFleet/features/rackManagement/components/RackSettingsModal";
+import { ManageRackModal, type RackFormData } from "@/protoFleet/features/fleetManagement/components/ManageRackModal";
+import { RackCard } from "@/protoFleet/features/fleetManagement/components/RackCard";
+import RackSettingsModal from "@/protoFleet/features/fleetManagement/components/RackSettingsModal";
 import {
   BUILDING_URL_PARAM,
   parseBuildingIdsFromParams,
-} from "@/protoFleet/features/rackManagement/utils/buildingFilterUrl";
-import { mapRackToCardProps } from "@/protoFleet/features/rackManagement/utils/rackCardMapper";
+} from "@/protoFleet/features/fleetManagement/utils/buildingFilterUrl";
+import { mapRackToCardProps } from "@/protoFleet/features/fleetManagement/utils/rackCardMapper";
 import { useDeviceSetListState } from "@/protoFleet/hooks/useDeviceSetListState";
 import { useHasPermission } from "@/protoFleet/store";
 import { useFleetStore } from "@/protoFleet/store/useFleetStore";
@@ -126,9 +123,9 @@ const RacksPage = () => {
   }, [effectiveBuildingIds]);
   const getBuildingIds = useCallback(() => effectiveBuildingIdsRef.current, []);
 
-  // AssignMinersModal state
-  const [assignMinersFormData, setAssignMinersFormData] = useState<RackFormData | null>(null);
-  const [assignMinersRackId, setAssignMinersRackId] = useState<bigint | undefined>(undefined);
+  // ManageRackModal state
+  const [manageRackFormData, setManageRackFormData] = useState<RackFormData | null>(null);
+  const [manageRackId, setManageRackId] = useState<bigint | undefined>(undefined);
 
   const { selectedIssuesRef, getErrorComponentTypes } = useIssueFilter();
 
@@ -332,31 +329,31 @@ const RacksPage = () => {
 
   const handleRackSettingsContinue = useCallback((formData: RackFormData) => {
     setShowRackSettingsModal(false);
-    setAssignMinersFormData(formData);
-    setAssignMinersRackId(undefined);
+    setManageRackFormData(formData);
+    setManageRackId(undefined);
   }, []);
 
-  const handleAssignMinersDismiss = useCallback(() => {
-    setAssignMinersFormData(null);
-    setAssignMinersRackId(undefined);
+  const handleManageRackDismiss = useCallback(() => {
+    setManageRackFormData(null);
+    setManageRackId(undefined);
   }, []);
 
-  const handleAssignMinersSave = useCallback(() => {
-    setAssignMinersFormData(null);
-    setAssignMinersRackId(undefined);
+  const handleManageRackSave = useCallback(() => {
+    setManageRackFormData(null);
+    setManageRackId(undefined);
     resetAndFetch();
     fetchZones();
   }, [resetAndFetch, fetchZones]);
 
   const handleDeleteRack = useCallback(() => {
-    if (!assignMinersRackId) return Promise.resolve();
+    if (!manageRackId) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
       deleteGroup({
-        deviceSetId: assignMinersRackId,
+        deviceSetId: manageRackId,
         onSuccess: () => {
           pushToast({ message: "Rack deleted", status: STATUSES.success });
-          setAssignMinersFormData(null);
-          setAssignMinersRackId(undefined);
+          setManageRackFormData(null);
+          setManageRackId(undefined);
           resetAndFetch();
           fetchZones();
           resolve();
@@ -367,7 +364,7 @@ const RacksPage = () => {
         },
       });
     });
-  }, [assignMinersRackId, deleteGroup, resetAndFetch, fetchZones]);
+  }, [manageRackId, deleteGroup, resetAndFetch, fetchZones]);
 
   // Mirrors Edit building → ManageBuildingModal: row-level Edit opens
   // the full-screen miners surface directly, with the small
@@ -375,7 +372,7 @@ const RacksPage = () => {
   const handleEditRack = useCallback((rack: DeviceSet) => {
     const rackInfo = rack.typeDetails.case === "rackInfo" ? rack.typeDetails.value : undefined;
     if (!rackInfo) return;
-    setAssignMinersFormData({
+    setManageRackFormData({
       label: rack.label,
       zone: rackInfo.zone,
       rows: rackInfo.rows,
@@ -383,7 +380,7 @@ const RacksPage = () => {
       orderIndex: rackInfo.orderIndex,
       coolingType: rackInfo.coolingType,
     });
-    setAssignMinersRackId(rack.id);
+    setManageRackId(rack.id);
   }, []);
 
   // Add-to-site stays deferred — no dedicated AssignRackToSite RPC,
@@ -472,7 +469,7 @@ const RacksPage = () => {
   const numColumns = Math.max(1, Math.floor((contentRect.width || RACK_CARD_MIN_WIDTH_PX) / RACK_CARD_MIN_WIDTH_PX));
 
   // Polling — refresh current page every 60s, paused while modals are open
-  const isModalOpen = !!assignMinersFormData || showRackSettingsModal;
+  const isModalOpen = !!manageRackFormData || showRackSettingsModal;
   useEffect(() => {
     if (!hasCompletedInitialFetch || isModalOpen) return;
     const intervalId = setInterval(() => {
@@ -539,15 +536,15 @@ const RacksPage = () => {
             onContinue={handleRackSettingsContinue}
           />
         ) : null}
-        {assignMinersFormData ? (
-          <AssignMinersModal
-            show={!!assignMinersFormData}
-            rackSettings={assignMinersFormData}
-            existingRackId={assignMinersRackId}
+        {manageRackFormData ? (
+          <ManageRackModal
+            show={!!manageRackFormData}
+            rackSettings={manageRackFormData}
+            existingRackId={manageRackId}
             existingRacks={racks}
-            onDismiss={handleAssignMinersDismiss}
-            onSave={handleAssignMinersSave}
-            onDelete={assignMinersRackId ? handleDeleteRack : undefined}
+            onDismiss={handleManageRackDismiss}
+            onSave={handleManageRackSave}
+            onDelete={manageRackId ? handleDeleteRack : undefined}
           />
         ) : null}
       </>
@@ -731,14 +728,14 @@ const RacksPage = () => {
           onContinue={handleRackSettingsContinue}
         />
       ) : null}
-      {assignMinersFormData ? (
-        <AssignMinersModal
-          show={!!assignMinersFormData}
-          rackSettings={assignMinersFormData}
-          existingRackId={assignMinersRackId}
+      {manageRackFormData ? (
+        <ManageRackModal
+          show={!!manageRackFormData}
+          rackSettings={manageRackFormData}
+          existingRackId={manageRackId}
           existingRacks={racks}
-          onDismiss={handleAssignMinersDismiss}
-          onSave={handleAssignMinersSave}
+          onDismiss={handleManageRackDismiss}
+          onSave={handleManageRackSave}
         />
       ) : null}
       {reparentTarget ? (

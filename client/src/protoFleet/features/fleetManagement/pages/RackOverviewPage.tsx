@@ -15,18 +15,15 @@ import { useDeviceSets } from "@/protoFleet/api/useDeviceSets";
 import { useDeviceSetStateCounts } from "@/protoFleet/api/useDeviceSetStateCounts";
 import { useTelemetryMetrics } from "@/protoFleet/api/useTelemetryMetrics";
 import { POLL_INTERVAL_MS } from "@/protoFleet/constants/polling";
+import { ManageRackModal, type RackFormData } from "@/protoFleet/features/fleetManagement/components/ManageRackModal";
+import SearchMinersModal from "@/protoFleet/features/fleetManagement/components/ManageRackModal/SearchMinersModal";
+import { orderIndexToOrigin } from "@/protoFleet/features/fleetManagement/components/ManageRackModal/types";
+import type { SlotHealthState } from "@/protoFleet/features/fleetManagement/components/RackDetailGrid/types";
+import { RackHealthModule } from "@/protoFleet/features/fleetManagement/components/RackHealthModule";
+import { SLOT_STATUS_MAP } from "@/protoFleet/features/fleetManagement/utils/rackCardMapper";
 import DeviceSetActionsMenu from "@/protoFleet/features/groupManagement/components/DeviceSetActionsMenu";
 import { DeviceSetPerformanceSection } from "@/protoFleet/features/groupManagement/components/DeviceSetPerformanceSection";
 import FleetErrors from "@/protoFleet/features/kpis/components/FleetErrors";
-import {
-  AssignMinersModal,
-  type RackFormData,
-} from "@/protoFleet/features/rackManagement/components/AssignMinersModal";
-import SearchMinersModal from "@/protoFleet/features/rackManagement/components/AssignMinersModal/SearchMinersModal";
-import { orderIndexToOrigin } from "@/protoFleet/features/rackManagement/components/AssignMinersModal/types";
-import type { SlotHealthState } from "@/protoFleet/features/rackManagement/components/RackDetailGrid/types";
-import { RackHealthModule } from "@/protoFleet/features/rackManagement/components/RackHealthModule";
-import { SLOT_STATUS_MAP } from "@/protoFleet/features/rackManagement/utils/rackCardMapper";
 import { useDuration, useSetDuration } from "@/protoFleet/store";
 import { ChevronDown } from "@/shared/assets/icons";
 import Button, { variants } from "@/shared/components/Button";
@@ -209,7 +206,7 @@ const RackOverviewPage = () => {
     return states;
   }, [deviceSetStats]);
 
-  // AssignMinersModal form data (for edit rack flow)
+  // ManageRackModal form data (for edit rack flow)
   const assignMinersFormData = useMemo<RackFormData | null>(() => {
     if (!showEditModal || !rack || !rackInfo) return null;
     return {
@@ -413,7 +410,7 @@ const RackOverviewPage = () => {
       </div>
 
       {showEditModal && rack && assignMinersFormData ? (
-        <AssignMinersModal
+        <ManageRackModal
           show
           rackSettings={assignMinersFormData}
           existingRackId={rack.id}
