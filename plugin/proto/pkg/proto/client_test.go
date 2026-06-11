@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,30 @@ const (
 	decimalBase = 10
 	int32Bits   = 32
 )
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+type errorAfterReader struct {
+	remaining int
+	err       error
+}
+
+func (r *errorAfterReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, r.err
+	}
+	if len(p) > r.remaining {
+		p = p[:r.remaining]
+	}
+	clear(p)
+	r.remaining -= len(p)
+	return len(p), nil
+}
 
 // TestClientCreation tests the NewClient function with different configurations
 func TestClientCreation(t *testing.T) {
@@ -941,6 +966,8 @@ func TestUploadFirmware(t *testing.T) {
 					assert.Equal(t, "/api/v1/system/update", r.URL.Path)
 					assert.Equal(t, "Bearer "+testToken, r.Header.Get("Authorization"))
 					assert.True(t, strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data"))
+					assert.Empty(t, r.TransferEncoding, "firmware upload must not use chunked transfer encoding")
+					assert.Greater(t, r.ContentLength, int64(len(firmwareContent)), "multipart content length should include file plus form boundaries")
 
 					file, header, err := r.FormFile("file")
 					require.NoError(t, err, "should be able to read 'file' field")
@@ -1061,6 +1088,42 @@ func TestUploadFirmware(t *testing.T) {
 	}
 }
 
+func TestMultipartFirmwareBody_ContentLengthMatchesWrittenBytes(t *testing.T) {
+	firmwareContent := []byte("firmware-data")
+	firmware := sdk.FirmwareFile{
+		Reader:   bytes.NewReader(firmwareContent),
+		Filename: "firmware.swu",
+		Size:     int64(len(firmwareContent)),
+	}
+
+	parts, err := multipartFirmwareParts(firmware)
+	require.NoError(t, err)
+
+	var body bytes.Buffer
+	err = writeMultipartFirmwareBody(&body, firmware, parts)
+
+	require.NoError(t, err)
+	assert.Equal(t, parts.contentLength, int64(body.Len()))
+	assert.Contains(t, body.String(), `name="file"; filename="firmware.swu"`)
+}
+
+func TestMultipartFirmwareBody_ShortReaderReturnsError(t *testing.T) {
+	firmware := sdk.FirmwareFile{
+		Reader:   strings.NewReader("short"),
+		Filename: "firmware.swu",
+		Size:     100,
+	}
+
+	parts, err := multipartFirmwareParts(firmware)
+	require.NoError(t, err)
+
+	var body bytes.Buffer
+	err = writeMultipartFirmwareBody(&body, firmware, parts)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "firmware reader ended before declared size")
+}
+
 // TestUploadFirmware_413_ReturnsFailedPrecondition verifies that an HTTP 413 from the rig
 // produces a gRPC FailedPrecondition status error (which the server classifies as permanent).
 func TestUploadFirmware_413_ReturnsFailedPrecondition(t *testing.T) {
@@ -1076,10 +1139,11 @@ func TestUploadFirmware_413_ReturnsFailedPrecondition(t *testing.T) {
 	err := client.SetCredentials(sdk.BearerToken{Token: "test-token"})
 	require.NoError(t, err)
 
+	const firmwareSize = 97_000_000
 	firmware := sdk.FirmwareFile{
-		Reader:   bytes.NewReader([]byte("firmware-data")),
+		Reader:   io.LimitReader(zeroReader{}, firmwareSize),
 		Filename: "firmware.swu",
-		Size:     97_000_000,
+		Size:     firmwareSize,
 	}
 
 	err = client.UploadFirmware(context.Background(), firmware)
@@ -1091,6 +1155,34 @@ func TestUploadFirmware_413_ReturnsFailedPrecondition(t *testing.T) {
 	assert.Contains(t, st.Message(), "payload too large")
 	assert.Contains(t, st.Message(), "97000000")
 	assert.Contains(t, st.Message(), "413 Request Entity Too Large")
+}
+
+func TestUploadFirmware_EarlyOKWaitsForWriterError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	defer func() { _ = client.Close() }()
+
+	firmwareErr := errors.New("firmware stream failed")
+	firmware := sdk.FirmwareFile{
+		Reader:   &errorAfterReader{remaining: 1024, err: firmwareErr},
+		Filename: "firmware.swu",
+		Size:     97_000_000,
+	}
+
+	err := client.UploadFirmware(context.Background(), firmware)
+
+	require.Error(t, err)
+	assert.True(t,
+		strings.Contains(err.Error(), "firmware stream failed") ||
+			strings.Contains(err.Error(), "multipart writer failed"),
+		"expected upload to surface the body writer failure, got: %v", err)
 }
 
 // TestUploadFirmware_ContextCancellation tests that firmware upload respects context cancellation.
@@ -1138,6 +1230,26 @@ func TestUploadFirmware_NilReader(t *testing.T) {
 	err := client.UploadFirmware(context.Background(), firmware)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "firmware reader is required")
+}
+
+func TestUploadFirmware_NegativeSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be called when firmware size is invalid")
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	defer func() { _ = client.Close() }()
+
+	firmware := sdk.FirmwareFile{
+		Reader:   bytes.NewReader([]byte("firmware-data")),
+		Filename: "firmware.swu",
+		Size:     -1,
+	}
+
+	err := client.UploadFirmware(context.Background(), firmware)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "firmware size must be non-negative")
 }
 
 func TestErrorsResponse_UnmarshalJSON(t *testing.T) {
