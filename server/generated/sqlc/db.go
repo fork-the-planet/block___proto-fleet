@@ -603,6 +603,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertMinerStateSnapshotStmt, err = db.PrepareContext(ctx, insertMinerStateSnapshot); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertMinerStateSnapshot: %w", err)
 	}
+	if q.insertNotificationHistoryStmt, err = db.PrepareContext(ctx, insertNotificationHistory); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertNotificationHistory: %w", err)
+	}
+	if q.insertNotificationMetricSamplesStmt, err = db.PrepareContext(ctx, insertNotificationMetricSamples); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertNotificationMetricSamples: %w", err)
+	}
 	if q.isBatchFinishedStmt, err = db.PrepareContext(ctx, isBatchFinished); err != nil {
 		return nil, fmt.Errorf("error preparing query IsBatchFinished: %w", err)
 	}
@@ -2080,6 +2086,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertMinerStateSnapshotStmt: %w", cerr)
 		}
 	}
+	if q.insertNotificationHistoryStmt != nil {
+		if cerr := q.insertNotificationHistoryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertNotificationHistoryStmt: %w", cerr)
+		}
+	}
+	if q.insertNotificationMetricSamplesStmt != nil {
+		if cerr := q.insertNotificationMetricSamplesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertNotificationMetricSamplesStmt: %w", cerr)
+		}
+	}
 	if q.isBatchFinishedStmt != nil {
 		if cerr := q.isBatchFinishedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing isBatchFinishedStmt: %w", cerr)
@@ -3157,6 +3173,8 @@ type Queries struct {
 	insertErrorStmt                                     *sql.Stmt
 	insertMQTTSourceConfigStmt                          *sql.Stmt
 	insertMinerStateSnapshotStmt                        *sql.Stmt
+	insertNotificationHistoryStmt                       *sql.Stmt
+	insertNotificationMetricSamplesStmt                 *sql.Stmt
 	isBatchFinishedStmt                                 *sql.Stmt
 	isBatchProcessingStmt                               *sql.Stmt
 	listActiveCurtailedDevicesByOrgStmt                 *sql.Stmt
@@ -3525,6 +3543,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		insertErrorStmt:                                     q.insertErrorStmt,
 		insertMQTTSourceConfigStmt:                          q.insertMQTTSourceConfigStmt,
 		insertMinerStateSnapshotStmt:                        q.insertMinerStateSnapshotStmt,
+		insertNotificationHistoryStmt:                       q.insertNotificationHistoryStmt,
+		insertNotificationMetricSamplesStmt:                 q.insertNotificationMetricSamplesStmt,
 		isBatchFinishedStmt:                                 q.isBatchFinishedStmt,
 		isBatchProcessingStmt:                               q.isBatchProcessingStmt,
 		listActiveCurtailedDevicesByOrgStmt:                 q.listActiveCurtailedDevicesByOrgStmt,
