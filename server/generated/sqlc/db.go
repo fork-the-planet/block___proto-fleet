@@ -651,6 +651,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.isBatchProcessingStmt, err = db.PrepareContext(ctx, isBatchProcessing); err != nil {
 		return nil, fmt.Errorf("error preparing query IsBatchProcessing: %w", err)
 	}
+	if q.isDeviceOwnedByFleetNodeStmt, err = db.PrepareContext(ctx, isDeviceOwnedByFleetNode); err != nil {
+		return nil, fmt.Errorf("error preparing query IsDeviceOwnedByFleetNode: %w", err)
+	}
 	if q.listActiveCurtailedDevicesByOrgStmt, err = db.PrepareContext(ctx, listActiveCurtailedDevicesByOrg); err != nil {
 		return nil, fmt.Errorf("error preparing query ListActiveCurtailedDevicesByOrg: %w", err)
 	}
@@ -2235,6 +2238,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing isBatchProcessingStmt: %w", cerr)
 		}
 	}
+	if q.isDeviceOwnedByFleetNodeStmt != nil {
+		if cerr := q.isDeviceOwnedByFleetNodeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing isDeviceOwnedByFleetNodeStmt: %w", cerr)
+		}
+	}
 	if q.listActiveCurtailedDevicesByOrgStmt != nil {
 		if cerr := q.listActiveCurtailedDevicesByOrgStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listActiveCurtailedDevicesByOrgStmt: %w", cerr)
@@ -3373,6 +3381,7 @@ type Queries struct {
 	insertNotificationMetricSamplesStmt                   *sql.Stmt
 	isBatchFinishedStmt                                   *sql.Stmt
 	isBatchProcessingStmt                                 *sql.Stmt
+	isDeviceOwnedByFleetNodeStmt                          *sql.Stmt
 	listActiveCurtailedDevicesByOrgStmt                   *sql.Stmt
 	listActiveCurtailmentEventsStmt                       *sql.Stmt
 	listActiveOrganizationIDsStmt                         *sql.Stmt
@@ -3766,6 +3775,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		insertNotificationMetricSamplesStmt:                   q.insertNotificationMetricSamplesStmt,
 		isBatchFinishedStmt:                                   q.isBatchFinishedStmt,
 		isBatchProcessingStmt:                                 q.isBatchProcessingStmt,
+		isDeviceOwnedByFleetNodeStmt:                          q.isDeviceOwnedByFleetNodeStmt,
 		listActiveCurtailedDevicesByOrgStmt:                   q.listActiveCurtailedDevicesByOrgStmt,
 		listActiveCurtailmentEventsStmt:                       q.listActiveCurtailmentEventsStmt,
 		listActiveOrganizationIDsStmt:                         q.listActiveOrganizationIDsStmt,
