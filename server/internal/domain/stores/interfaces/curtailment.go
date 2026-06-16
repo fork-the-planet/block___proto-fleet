@@ -151,11 +151,6 @@ type CurtailmentStore interface {
 	GetEventByUUID(ctx context.Context, orgID int64, eventUUID uuid.UUID) (*models.Event, error)
 	GetEventDetailByUUID(ctx context.Context, orgID int64, eventUUID uuid.UUID) (*models.Event, error)
 
-	// GetActiveEvent returns the most-recent non-terminal event for the org,
-	// or nil. Multiple non-terminal events can coexist (one per disjoint
-	// device scope); ListActiveEvents returns all of them.
-	GetActiveEvent(ctx context.Context, orgID int64) (*models.Event, error)
-
 	// ListActiveEvents returns every non-terminal event for the org,
 	// most-recent first.
 	ListActiveEvents(ctx context.Context, orgID int64) ([]*models.Event, error)
@@ -188,6 +183,7 @@ type CurtailmentStore interface {
 
 	ListTargetsByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) ([]*models.Target, error)
 	ListTargetsByEventPage(ctx context.Context, params ListTargetsByEventPageParams) ([]*models.Target, string, error)
+	ListTargetSiteIDsByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) ([]int64, bool, error)
 	GetTargetRollupByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) (*models.TargetRollup, error)
 
 	// InsertEventWithTargets writes the event + every target row in one

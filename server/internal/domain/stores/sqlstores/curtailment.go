@@ -731,17 +731,6 @@ func (s *SQLCurtailmentStore) GetEventDetailByUUID(ctx context.Context, orgID in
 	return convertEventDetailRow(row), nil
 }
 
-func (s *SQLCurtailmentStore) GetActiveEvent(ctx context.Context, orgID int64) (*models.Event, error) {
-	row, err := s.GetQueries(ctx).GetActiveCurtailmentEvent(ctx, orgID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fleeterror.NewInternalErrorf("failed to get active curtailment event for org %d: %v", orgID, err)
-	}
-	return convertEventRow(row), nil
-}
-
 func (s *SQLCurtailmentStore) ListActiveEvents(ctx context.Context, orgID int64) ([]*models.Event, error) {
 	rows, err := s.GetQueries(ctx).ListActiveCurtailmentEvents(ctx, orgID)
 	if err != nil {
@@ -749,7 +738,7 @@ func (s *SQLCurtailmentStore) ListActiveEvents(ctx context.Context, orgID int64)
 	}
 	events := make([]*models.Event, len(rows))
 	for i, row := range rows {
-		events[i] = convertEventRow(row)
+		events[i] = convertActiveEventRow(row)
 	}
 	return events, nil
 }
@@ -1043,6 +1032,32 @@ func (s *SQLCurtailmentStore) ListTargetsByEventPage(ctx context.Context, params
 		targets = append(targets, convertTargetRow(row))
 	}
 	return targets, nextToken, nil
+}
+
+func (s *SQLCurtailmentStore) ListTargetSiteIDsByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) ([]int64, bool, error) {
+	rows, err := s.GetQueries(ctx).ListCurtailmentTargetSiteCoverageByEvent(ctx, sqlc.ListCurtailmentTargetSiteCoverageByEventParams{
+		OrgID:     orgID,
+		EventUuid: eventUUID,
+	})
+	if err != nil {
+		return nil, false, fleeterror.NewInternalErrorf("failed to list curtailment target site coverage: %v", err)
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
+	}
+	siteIDs := make([]int64, 0, len(rows))
+	complete := rows[0].TargetCount > 0 && rows[0].TargetCount == rows[0].MappedTargetCount
+	for _, row := range rows {
+		if row.SiteID <= 0 {
+			complete = false
+			continue
+		}
+		siteIDs = append(siteIDs, row.SiteID)
+		if row.TargetCount != rows[0].TargetCount || row.MappedTargetCount != rows[0].MappedTargetCount {
+			complete = false
+		}
+	}
+	return siteIDs, complete, nil
 }
 
 func (s *SQLCurtailmentStore) GetTargetRollupByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) (*models.TargetRollup, error) {
@@ -1432,6 +1447,47 @@ func convertEventDetailRow(row sqlc.GetCurtailmentEventDetailByUUIDRow) *models.
 }
 
 func convertEventListRow(row sqlc.ListCurtailmentEventsForOrgRow) *models.Event {
+	return convertEventFields(
+		row.ID,
+		row.EventUuid,
+		row.OrgID,
+		row.State,
+		row.Mode,
+		row.Strategy,
+		row.Level,
+		row.Priority,
+		row.LoopType,
+		row.ScopeType,
+		row.ScopeJsonb,
+		row.ModeParamsJsonb,
+		row.CurtailBatchSize,
+		row.CurtailBatchIntervalSec,
+		row.RestoreBatchSize,
+		row.RestoreBatchIntervalSec,
+		row.EffectiveBatchSize,
+		row.MinCurtailedDurationSec,
+		row.MaxDurationSeconds,
+		row.AllowUnbounded,
+		row.IncludeMaintenance,
+		row.ForceIncludeMaintenance,
+		row.DecisionSnapshotJsonb,
+		row.SourceActorType,
+		row.SourceActorID,
+		row.ExternalSource,
+		row.ExternalReference,
+		row.IdempotencyKey,
+		row.SupersedesEventID,
+		row.Reason,
+		row.ScheduledStartAt,
+		row.StartedAt,
+		row.EndedAt,
+		row.CreatedByUserID,
+		row.CreatedAt,
+		row.UpdatedAt,
+	)
+}
+
+func convertActiveEventRow(row sqlc.ListActiveCurtailmentEventsRow) *models.Event {
 	return convertEventFields(
 		row.ID,
 		row.EventUuid,

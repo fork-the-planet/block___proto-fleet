@@ -282,16 +282,9 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Plan, error) {
 	return plan, nil
 }
 
-func (s *Service) GetActive(ctx context.Context, orgID int64) (*models.Event, error) {
-	if orgID <= 0 {
-		return nil, fleeterror.NewInvalidArgumentError("org_id must be set")
-	}
-	return s.store.GetActiveEvent(ctx, orgID)
-}
-
 // ListActive returns every non-terminal event for the org, most-recent first.
 // Multiple can be active when they target disjoint device scopes (e.g. one per
-// site); GetActive returns only the most-recent.
+// site).
 func (s *Service) ListActive(ctx context.Context, orgID int64) ([]*models.Event, error) {
 	if orgID <= 0 {
 		return nil, fleeterror.NewInvalidArgumentError("org_id must be set")
@@ -883,18 +876,6 @@ func (s *Service) GetEventWithTargets(ctx context.Context, req GetEventWithTarge
 	return event, targets, nextToken, nil
 }
 
-func (s *Service) GetActiveWithTargets(ctx context.Context, orgID int64) (*models.Event, []*models.Target, error) {
-	event, err := s.GetActive(ctx, orgID)
-	if err != nil || event == nil {
-		return event, nil, err
-	}
-	targets, err := s.store.ListTargetsByEvent(ctx, orgID, event.EventUUID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return event, targets, nil
-}
-
 func (s *Service) ListTargetsByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) ([]*models.Target, error) {
 	if orgID <= 0 {
 		return nil, fleeterror.NewInvalidArgumentError("org_id must be set")
@@ -903,6 +884,16 @@ func (s *Service) ListTargetsByEvent(ctx context.Context, orgID int64, eventUUID
 		return nil, fleeterror.NewInvalidArgumentError("event_uuid must be set")
 	}
 	return s.store.ListTargetsByEvent(ctx, orgID, eventUUID)
+}
+
+func (s *Service) ListTargetSiteIDsByEvent(ctx context.Context, orgID int64, eventUUID uuid.UUID) ([]int64, bool, error) {
+	if orgID <= 0 {
+		return nil, false, fleeterror.NewInvalidArgumentError("org_id must be set")
+	}
+	if eventUUID == uuid.Nil {
+		return nil, false, fleeterror.NewInvalidArgumentError("event_uuid must be set")
+	}
+	return s.store.ListTargetSiteIDsByEvent(ctx, orgID, eventUUID)
 }
 
 // runSelector runs the org-config → scope → candidate → classify →

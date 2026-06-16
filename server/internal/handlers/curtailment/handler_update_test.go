@@ -134,9 +134,6 @@ func (s *updateStubStore) ListCandidates(context.Context, interfaces.ListCandida
 func (s *updateStubStore) InsertEventWithTargets(context.Context, models.InsertEventParams, []models.InsertTargetParams) (*models.InsertEventResult, error) {
 	panic("InsertEventWithTargets not exercised by Update handler tests")
 }
-func (s *updateStubStore) GetActiveEvent(context.Context, int64) (*models.Event, error) {
-	panic("GetActiveEvent not exercised by Update handler tests")
-}
 func (s *updateStubStore) ListActiveEvents(context.Context, int64) ([]*models.Event, error) {
 	panic("ListActiveEvents not exercised by Update handler tests")
 }
@@ -145,6 +142,9 @@ func (s *updateStubStore) ListTargetsByEvent(context.Context, int64, uuid.UUID) 
 }
 func (s *updateStubStore) ListTargetsByEventPage(context.Context, interfaces.ListTargetsByEventPageParams) ([]*models.Target, string, error) {
 	panic("ListTargetsByEventPage not exercised by Update handler tests")
+}
+func (s *updateStubStore) ListTargetSiteIDsByEvent(context.Context, int64, uuid.UUID) ([]int64, bool, error) {
+	panic("ListTargetSiteIDsByEvent not exercised by Update handler tests")
 }
 func (s *updateStubStore) GetTargetRollupByEvent(context.Context, int64, uuid.UUID) (*models.TargetRollup, error) {
 	panic("GetTargetRollupByEvent not exercised by Update handler tests")

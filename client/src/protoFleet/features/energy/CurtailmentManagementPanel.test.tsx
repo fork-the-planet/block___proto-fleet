@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   goToHistoryPage: vi.fn(),
   navigate: vi.fn(),
   refreshCurtailment: vi.fn(),
+  selectActiveCurtailment: vi.fn(),
   setHistoryStatusFilter: vi.fn(),
   setHistoryStatusFilters: vi.fn(),
   startCurtailment: vi.fn(),
@@ -83,8 +84,10 @@ vi.mock("@/protoFleet/features/energy/CurtailmentHistory", () => ({
     pageSize,
     selectedStatusFilters,
     onPageChange,
+    onManageActiveEvent,
     onStatusFiltersChange,
     onStopActiveEvent,
+    onStopActiveEventRequested,
   }: {
     currentPage?: number;
     events: CurtailmentHistoryEvent[];
@@ -93,8 +96,10 @@ vi.mock("@/protoFleet/features/energy/CurtailmentHistory", () => ({
     pageSize?: number;
     selectedStatusFilters?: string[];
     onPageChange?: (page: number) => void;
+    onManageActiveEvent?: (event: CurtailmentHistoryEvent) => void;
     onStatusFiltersChange?: (filters: string[]) => void;
     onStopActiveEvent?: (event: CurtailmentHistoryEvent) => void | Promise<unknown>;
+    onStopActiveEventRequested?: (event: CurtailmentHistoryEvent) => void;
   }) => (
     <div data-testid="curtailment-history">
       <div data-testid="history-page">{currentPage}</div>
@@ -109,12 +114,33 @@ vi.mock("@/protoFleet/features/energy/CurtailmentHistory", () => ({
       <button type="button" onClick={() => onStatusFiltersChange?.(["completed", "failed"])}>
         Filter completed and failed
       </button>
+      {onManageActiveEvent ? (
+        <>
+          <button
+            type="button"
+            disabled={events.length === 0}
+            onClick={() => {
+              if (events[0]) {
+                onManageActiveEvent(events[0]);
+              }
+            }}
+          >
+            Manage history event
+          </button>
+          {events[1] ? (
+            <button type="button" onClick={() => onManageActiveEvent(events[1])}>
+              Manage second history event
+            </button>
+          ) : null}
+        </>
+      ) : null}
       {onStopActiveEvent ? (
         <button
           type="button"
           disabled={events.length === 0}
           onClick={() => {
             if (events[0]) {
+              onStopActiveEventRequested?.(events[0]);
               onStopActiveEvent(events[0]);
             }
           }}
@@ -204,6 +230,7 @@ const historyEvent = { id: "curt-1" } as CurtailmentHistoryEvent;
 
 const emptySnapshot = {
   activeEvent: null,
+  activeEvents: [],
   activeEventId: null,
   activeEventFormValues: null,
   historyEvents: [],
@@ -212,6 +239,7 @@ const emptySnapshot = {
 function createApiResult(overrides: Partial<UseCurtailmentApiResult> = {}): UseCurtailmentApiResult {
   return {
     activeEvent: null,
+    activeEvents: [],
     activeEventId: null,
     historyEvents: [],
     activeEventFormValues: null,
@@ -232,6 +260,7 @@ function createApiResult(overrides: Partial<UseCurtailmentApiResult> = {}): UseC
     goToHistoryPage: mocks.goToHistoryPage as UseCurtailmentApiResult["goToHistoryPage"],
     setHistoryStatusFilter: mocks.setHistoryStatusFilter as UseCurtailmentApiResult["setHistoryStatusFilter"],
     setHistoryStatusFilters: mocks.setHistoryStatusFilters as UseCurtailmentApiResult["setHistoryStatusFilters"],
+    selectActiveCurtailment: mocks.selectActiveCurtailment as UseCurtailmentApiResult["selectActiveCurtailment"],
     startCurtailment: mocks.startCurtailment as UseCurtailmentApiResult["startCurtailment"],
     dismissTerminalCurtailment:
       mocks.dismissTerminalCurtailment as UseCurtailmentApiResult["dismissTerminalCurtailment"],
@@ -246,6 +275,11 @@ describe("CurtailmentManagementPanel", () => {
     vi.clearAllMocks();
     mocks.refreshCurtailment.mockResolvedValue(emptySnapshot);
     mocks.goToHistoryPage.mockResolvedValue(emptySnapshot);
+    mocks.selectActiveCurtailment.mockResolvedValue({
+      activeEvent: null,
+      activeEventId: null,
+      activeEventFormValues: null,
+    });
     mocks.setHistoryStatusFilter.mockResolvedValue(emptySnapshot);
     mocks.setHistoryStatusFilters.mockResolvedValue(emptySnapshot);
     mocks.startCurtailment.mockResolvedValue({});
@@ -366,7 +400,7 @@ describe("CurtailmentManagementPanel", () => {
     expect(screen.getByTestId("modal-response-profile-values")).toHaveTextContent('"targetKw":"50"');
   });
 
-  it("shows an active curtailment limit dialog instead of opening a new plan", async () => {
+  it("opens a new plan while a curtailment is already active", async () => {
     const user = userEvent.setup();
     mocks.useCurtailmentApi.mockReturnValue(
       createApiResult({
@@ -380,14 +414,8 @@ describe("CurtailmentManagementPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Run curtailment" }));
 
-    expect(screen.getByTestId("active-curtailment-limit-dialog")).toBeInTheDocument();
-    expect(screen.getByText("Curtailment already active")).toBeInTheDocument();
-    expect(screen.getByText("You can only have one active curtailment at a time.")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "New curtailment" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Got it" }));
-
-    await waitFor(() => expect(screen.queryByTestId("active-curtailment-limit-dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("dialog", { name: "New curtailment" })).toBeInTheDocument();
+    expect(screen.queryByTestId("active-curtailment-limit-dialog")).not.toBeInTheDocument();
     expect(mocks.startCurtailment).not.toHaveBeenCalled();
   });
 
@@ -396,6 +424,7 @@ describe("CurtailmentManagementPanel", () => {
     mocks.useCurtailmentApi.mockReturnValue(
       createApiResult({
         activeEvent,
+        activeEvents: [{ ...historyEvent, state: "active" }],
         activeEventId: "curt-1",
         historyEvents: [historyEvent],
       }),
@@ -417,6 +446,38 @@ describe("CurtailmentManagementPanel", () => {
     await user.click(screen.getByRole("button", { name: "Stop history event" }));
 
     expect(mocks.stopCurtailment).toHaveBeenLastCalledWith("curt-1");
+  });
+
+  it("does not submit stale stop confirmations for events that are no longer active", async () => {
+    const user = userEvent.setup();
+    const staleEvent = { ...historyEvent, state: "active" } as CurtailmentHistoryEvent;
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEvents: [staleEvent],
+        activeEventId: "curt-1",
+      }),
+    );
+
+    const { rerender } = render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Request stop" }));
+    expect(screen.getByRole("dialog", { name: "stopCurtailment confirmation" })).toBeInTheDocument();
+
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent: null,
+        activeEvents: [],
+        activeEventId: null,
+        historyEvents: [{ ...historyEvent, state: "completed" }],
+      }),
+    );
+    rerender(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Confirm confirmation" }));
+
+    expect(mocks.stopCurtailment).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "stopCurtailment confirmation" })).not.toBeInTheDocument();
   });
 
   it("dismisses terminal active curtailments from the active status card", async () => {
@@ -451,6 +512,7 @@ describe("CurtailmentManagementPanel", () => {
     mocks.useCurtailmentApi.mockReturnValue(
       createApiResult({
         activeEvent: { ...activeEvent, state: "restoring" },
+        activeEvents: [{ ...historyEvent, state: "restoring" }],
         activeEventId: "curt-1",
       }),
     );
@@ -528,6 +590,7 @@ describe("CurtailmentManagementPanel", () => {
     mocks.useCurtailmentApi.mockReturnValue(
       createApiResult({
         activeEvent: { ...activeEvent, state: "restoring" },
+        activeEvents: [{ ...historyEvent, state: "restoring" }],
         activeEventId: "curt-1",
       }),
     );
@@ -576,6 +639,327 @@ describe("CurtailmentManagementPanel", () => {
       expect(mocks.updateCurtailment).toHaveBeenCalledWith("curt-1", mocks.submitValues, activeEventFormValues),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage curtailment" })).not.toBeInTheDocument());
+  });
+
+  it("loads secondary active row detail before opening management", async () => {
+    const user = userEvent.setup();
+    const secondaryFormValues = {
+      ...activeEventFormValues,
+      reason: "Secondary grid peak",
+      targetKw: "8",
+    } satisfies CurtailmentSubmitValues;
+    const secondaryActiveEvent = {
+      ...activeEvent,
+      reason: "Secondary grid peak",
+      selectedMiners: 4,
+      targetKw: 8,
+      estimatedReductionKw: 9.1,
+    } as ActiveCurtailmentEvent;
+    const secondaryHistoryEvent = { ...historyEvent, id: "curt-2" } as CurtailmentHistoryEvent;
+    mocks.selectActiveCurtailment.mockResolvedValueOnce({
+      activeEvent: secondaryActiveEvent,
+      activeEventId: "curt-2",
+      activeEventFormValues: secondaryFormValues,
+    });
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+        activeEvents: [historyEvent, secondaryHistoryEvent],
+        historyEvents: [secondaryHistoryEvent],
+      }),
+    );
+
+    render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Manage history event" }));
+
+    await waitFor(() =>
+      expect(mocks.selectActiveCurtailment).toHaveBeenCalledWith("curt-2", { signal: expect.any(AbortSignal) }),
+    );
+    expect(screen.getByRole("dialog", { name: "Manage curtailment" })).toBeInTheDocument();
+    expect(screen.getByTestId("modal-initial-reason")).toHaveTextContent("Secondary grid peak");
+    expect(screen.getByTestId("modal-preview")).toHaveTextContent("4 miners, 8 kW target, 9.1 kW estimated");
+  });
+
+  it("does not open management when hydrated row detail is no longer updateable", async () => {
+    const user = userEvent.setup();
+    const restoringActiveEvent = {
+      ...activeEvent,
+      state: "restoring",
+      reason: "Restoring grid peak",
+    } as ActiveCurtailmentEvent;
+    const secondaryHistoryEvent = { ...historyEvent, id: "curt-2" } as CurtailmentHistoryEvent;
+    mocks.selectActiveCurtailment.mockResolvedValueOnce({
+      activeEvent: restoringActiveEvent,
+      activeEventId: "curt-2",
+      activeEventFormValues: {
+        ...activeEventFormValues,
+        reason: "Restoring grid peak",
+      },
+    });
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+        activeEvents: [historyEvent, secondaryHistoryEvent],
+        historyEvents: [secondaryHistoryEvent],
+      }),
+    );
+
+    render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Manage history event" }));
+
+    await waitFor(() =>
+      expect(mocks.selectActiveCurtailment).toHaveBeenCalledWith("curt-2", { signal: expect.any(AbortSignal) }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage curtailment" })).not.toBeInTheDocument());
+  });
+
+  it("ignores stale secondary active row detail responses", async () => {
+    const user = userEvent.setup();
+    const firstFormValues = {
+      ...activeEventFormValues,
+      reason: "First selected event",
+      targetKw: "6",
+    } satisfies CurtailmentSubmitValues;
+    const secondFormValues = {
+      ...activeEventFormValues,
+      reason: "Second selected event",
+      targetKw: "8",
+    } satisfies CurtailmentSubmitValues;
+    const firstActiveEvent = {
+      ...activeEvent,
+      reason: "First selected event",
+      targetKw: 6,
+      estimatedReductionKw: 6.5,
+    } as ActiveCurtailmentEvent;
+    const secondActiveEvent = {
+      ...activeEvent,
+      reason: "Second selected event",
+      selectedMiners: 4,
+      targetKw: 8,
+      estimatedReductionKw: 9.1,
+    } as ActiveCurtailmentEvent;
+    let resolveFirstSelection: (
+      value: Awaited<ReturnType<UseCurtailmentApiResult["selectActiveCurtailment"]>>,
+    ) => void = () => undefined;
+    let resolveSecondSelection: (
+      value: Awaited<ReturnType<UseCurtailmentApiResult["selectActiveCurtailment"]>>,
+    ) => void = () => undefined;
+    const firstHistoryEvent = { ...historyEvent, id: "curt-2" } as CurtailmentHistoryEvent;
+    const secondHistoryEvent = { ...historyEvent, id: "curt-3" } as CurtailmentHistoryEvent;
+    mocks.selectActiveCurtailment
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstSelection = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecondSelection = resolve;
+          }),
+      );
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+        activeEvents: [historyEvent, firstHistoryEvent, secondHistoryEvent],
+        historyEvents: [firstHistoryEvent, secondHistoryEvent],
+      }),
+    );
+
+    render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Manage history event" }));
+    const firstSignal = mocks.selectActiveCurtailment.mock.calls[0][1].signal as AbortSignal;
+    await user.click(screen.getByRole("button", { name: "Manage second history event" }));
+
+    expect(firstSignal.aborted).toBe(true);
+
+    resolveSecondSelection({
+      activeEvent: secondActiveEvent,
+      activeEventId: "curt-3",
+      activeEventFormValues: secondFormValues,
+    });
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Manage curtailment" })).toBeInTheDocument());
+
+    resolveFirstSelection({
+      activeEvent: firstActiveEvent,
+      activeEventId: "curt-2",
+      activeEventFormValues: firstFormValues,
+    });
+
+    await waitFor(() => expect(screen.getByTestId("modal-initial-reason")).toHaveTextContent("Second selected event"));
+    expect(screen.getByTestId("modal-preview")).toHaveTextContent("4 miners, 8 kW target, 9.1 kW estimated");
+  });
+
+  it("keeps selected-row management open when a stale secondary selection resolves", async () => {
+    const user = userEvent.setup();
+    const secondaryFormValues = {
+      ...activeEventFormValues,
+      reason: "Secondary grid peak",
+      targetKw: "8",
+    } satisfies CurtailmentSubmitValues;
+    const secondaryActiveEvent = {
+      ...activeEvent,
+      reason: "Secondary grid peak",
+      selectedMiners: 4,
+      targetKw: 8,
+      estimatedReductionKw: 9.1,
+    } as ActiveCurtailmentEvent;
+    let resolveSelection: (
+      value: Awaited<ReturnType<UseCurtailmentApiResult["selectActiveCurtailment"]>>,
+    ) => void = () => undefined;
+    const secondaryHistoryEvent = { ...historyEvent, id: "curt-2" } as CurtailmentHistoryEvent;
+    mocks.selectActiveCurtailment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSelection = resolve;
+        }),
+    );
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+        activeEvents: [secondaryHistoryEvent, { ...historyEvent, id: "curt-1" }],
+        historyEvents: [secondaryHistoryEvent, { ...historyEvent, id: "curt-1" }],
+      }),
+    );
+
+    render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Manage history event" }));
+    const selectionSignal = mocks.selectActiveCurtailment.mock.calls[0][1].signal as AbortSignal;
+    await user.click(screen.getByRole("button", { name: "Manage second history event" }));
+
+    expect(selectionSignal.aborted).toBe(true);
+    expect(screen.getByRole("dialog", { name: "Manage curtailment" })).toBeInTheDocument();
+    expect(screen.getByTestId("modal-initial-reason")).toHaveTextContent("Grid peak");
+
+    resolveSelection({
+      activeEvent: secondaryActiveEvent,
+      activeEventId: "curt-2",
+      activeEventFormValues: secondaryFormValues,
+    });
+
+    await waitFor(() => expect(screen.getByTestId("modal-initial-reason")).toHaveTextContent("Grid peak"));
+    expect(screen.getByTestId("modal-preview")).toHaveTextContent("2 miners, 5 kW target, 6.2 kW estimated");
+  });
+
+  it("keeps stop confirmation open when a stale manage selection resolves", async () => {
+    const user = userEvent.setup();
+    const secondaryFormValues = {
+      ...activeEventFormValues,
+      reason: "Secondary grid peak",
+      targetKw: "8",
+    } satisfies CurtailmentSubmitValues;
+    const secondaryActiveEvent = {
+      ...activeEvent,
+      reason: "Secondary grid peak",
+      selectedMiners: 4,
+      targetKw: 8,
+      estimatedReductionKw: 9.1,
+    } as ActiveCurtailmentEvent;
+    let resolveSelection: (
+      value: Awaited<ReturnType<UseCurtailmentApiResult["selectActiveCurtailment"]>>,
+    ) => void = () => undefined;
+    const secondaryHistoryEvent = { ...historyEvent, id: "curt-2" } as CurtailmentHistoryEvent;
+    mocks.selectActiveCurtailment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSelection = resolve;
+        }),
+    );
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+        activeEvents: [secondaryHistoryEvent],
+        historyEvents: [secondaryHistoryEvent],
+      }),
+    );
+
+    render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Manage history event" }));
+    const selectionSignal = mocks.selectActiveCurtailment.mock.calls[0][1].signal as AbortSignal;
+    await user.click(screen.getByRole("button", { name: "Request stop" }));
+
+    expect(selectionSignal.aborted).toBe(true);
+    expect(screen.getByRole("dialog", { name: "stopCurtailment confirmation" })).toBeInTheDocument();
+
+    resolveSelection({
+      activeEvent: secondaryActiveEvent,
+      activeEventId: "curt-2",
+      activeEventFormValues: secondaryFormValues,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "stopCurtailment confirmation" })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("dialog", { name: "Manage curtailment" })).not.toBeInTheDocument();
+  });
+
+  it("keeps create flow open when a stale manage selection resolves", async () => {
+    const user = userEvent.setup();
+    const secondaryFormValues = {
+      ...activeEventFormValues,
+      reason: "Secondary grid peak",
+      targetKw: "8",
+    } satisfies CurtailmentSubmitValues;
+    const secondaryActiveEvent = {
+      ...activeEvent,
+      reason: "Secondary grid peak",
+      selectedMiners: 4,
+      targetKw: 8,
+      estimatedReductionKw: 9.1,
+    } as ActiveCurtailmentEvent;
+    let resolveSelection: (
+      value: Awaited<ReturnType<UseCurtailmentApiResult["selectActiveCurtailment"]>>,
+    ) => void = () => undefined;
+    const secondaryHistoryEvent = { ...historyEvent, id: "curt-2" } as CurtailmentHistoryEvent;
+    mocks.selectActiveCurtailment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSelection = resolve;
+        }),
+    );
+    mocks.useCurtailmentApi.mockReturnValue(
+      createApiResult({
+        activeEvent,
+        activeEventId: "curt-1",
+        activeEventFormValues,
+        activeEvents: [historyEvent, secondaryHistoryEvent],
+        historyEvents: [secondaryHistoryEvent],
+      }),
+    );
+
+    render(<CurtailmentManagementPanel />);
+
+    await user.click(screen.getByRole("button", { name: "Manage history event" }));
+    const selectionSignal = mocks.selectActiveCurtailment.mock.calls[0][1].signal as AbortSignal;
+    await user.click(screen.getByRole("button", { name: "Run curtailment" }));
+
+    expect(selectionSignal.aborted).toBe(true);
+    expect(screen.getByRole("dialog", { name: "New curtailment" })).toBeInTheDocument();
+
+    resolveSelection({
+      activeEvent: secondaryActiveEvent,
+      activeEventId: "curt-2",
+      activeEventFormValues: secondaryFormValues,
+    });
+
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "New curtailment" })).toBeInTheDocument());
+    expect(screen.queryByRole("dialog", { name: "Manage curtailment" })).not.toBeInTheDocument();
   });
 
   it("uses estimated reduction as the edit preview target for full-fleet curtailments", async () => {

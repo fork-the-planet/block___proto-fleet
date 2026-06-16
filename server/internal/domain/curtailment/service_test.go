@@ -55,15 +55,15 @@ type fakeStore struct {
 	// targetsByEventUUID feeds ListTargetsByEvent;
 	// beginRestoreErr gives Service.Stop tests control over
 	// BeginRestoreTransition outcomes.
-	eventsByUUID            map[uuid.UUID]*models.Event
-	targetsByEventUUID      map[uuid.UUID][]*models.Target
-	activeEvent             *models.Event
-	activeEvents            []*models.Event
-	activeEventErr          error
-	listTargetsErr          error
-	beginRestoreErr         error
-	beginRestoreCalls       int
-	beginRestoreLastEventID uuid.UUID
+	eventsByUUID             map[uuid.UUID]*models.Event
+	targetsByEventUUID       map[uuid.UUID][]*models.Target
+	targetSiteIDsByEventUUID map[uuid.UUID][]int64
+	activeEvents             []*models.Event
+	activeEventErr           error
+	listTargetsErr           error
+	beginRestoreErr          error
+	beginRestoreCalls        int
+	beginRestoreLastEventID  uuid.UUID
 
 	beginRecurtailErr         error
 	beginRecurtailCalls       int
@@ -195,13 +195,6 @@ func (f *fakeStore) GetEventDetailByUUID(ctx context.Context, orgID int64, event
 	return f.GetEventByUUID(ctx, orgID, eventUUID)
 }
 
-func (f *fakeStore) GetActiveEvent(_ context.Context, _ int64) (*models.Event, error) {
-	if f.activeEventErr != nil {
-		return nil, f.activeEventErr
-	}
-	return f.activeEvent, nil
-}
-
 func (f *fakeStore) ListActiveEvents(_ context.Context, _ int64) ([]*models.Event, error) {
 	if f.activeEventErr != nil {
 		return nil, f.activeEventErr
@@ -219,6 +212,10 @@ func (f *fakeStore) ListTargetsByEvent(_ context.Context, _ int64, eventUUID uui
 func (f *fakeStore) ListTargetsByEventPage(ctx context.Context, params interfaces.ListTargetsByEventPageParams) ([]*models.Target, string, error) {
 	targets, err := f.ListTargetsByEvent(ctx, params.OrgID, params.EventUUID)
 	return targets, "", err
+}
+
+func (f *fakeStore) ListTargetSiteIDsByEvent(_ context.Context, _ int64, eventUUID uuid.UUID) ([]int64, bool, error) {
+	return append([]int64(nil), f.targetSiteIDsByEventUUID[eventUUID]...), true, nil
 }
 
 func (f *fakeStore) GetTargetRollupByEvent(_ context.Context, _ int64, eventUUID uuid.UUID) (*models.TargetRollup, error) {

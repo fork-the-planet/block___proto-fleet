@@ -145,6 +145,30 @@ describe("CurtailmentHistory", () => {
     expect(within(modal).getByText("High")).toBeInTheDocument();
   });
 
+  it("renders unavailable target metrics without misleading zero values", async () => {
+    const user = userEvent.setup();
+    const summaryOnlyEvent = {
+      ...mockCurtailmentHistoryEvents[0],
+      id: "curt-summary-only",
+      selectedMiners: 0,
+      estimatedReductionKw: 0,
+      targetKw: undefined,
+      targetMetricsAvailable: false,
+    };
+
+    render(<CurtailmentHistory events={[summaryOnlyEvent]} />);
+
+    const row = screen.getByTestId("curtailment-history-row-curt-summary-only");
+    expect(within(row).getAllByText("Target details unavailable")).toHaveLength(2);
+    expect(within(row).queryByText("0 miners")).not.toBeInTheDocument();
+    expect(within(row).queryByText("0.0 kW / 0.0 kW")).not.toBeInTheDocument();
+
+    await user.click(row);
+
+    const modal = screen.getByTestId("modal");
+    expect(within(modal).getAllByText("Target details unavailable")).toHaveLength(2);
+  });
+
   it("renders pending events without a start time", async () => {
     const user = userEvent.setup();
     const onStopActiveEvent = vi.fn();
@@ -473,6 +497,102 @@ describe("CurtailmentHistory", () => {
     const modal = screen.getByTestId("modal");
     expect(within(modal).getByText("Grid peak call")).toBeInTheDocument();
     expect(within(modal).queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
+  });
+
+  it("does not show manage actions for restoring active row summaries", async () => {
+    const user = userEvent.setup();
+    const onManageActiveEvent = vi.fn();
+    const restoringEvent = {
+      ...mockCurtailmentHistoryEvents[0],
+      id: "curt-restoring",
+      reason: "Restoring event",
+      state: "restoring" as const,
+    };
+
+    render(
+      <CurtailmentHistory
+        events={[restoringEvent]}
+        activeEventId="curt-restoring"
+        onManageActiveEvent={onManageActiveEvent}
+      />,
+    );
+
+    await user.click(screen.getByTestId("curtailment-history-row-curt-restoring"));
+
+    const modal = screen.getByTestId("modal");
+    expect(within(modal).getByText("Restoring event")).toBeInTheDocument();
+    expect(within(modal).queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
+    expect(onManageActiveEvent).not.toHaveBeenCalled();
+  });
+
+  it("routes secondary active row actions from activeEventIds", async () => {
+    const user = userEvent.setup();
+    const onManageActiveEvent = vi.fn();
+    const onStopActiveEvent = vi.fn();
+    const secondaryActiveEvent = {
+      ...mockCurtailmentHistoryEvents[0],
+      id: "curt-secondary-active",
+      reason: "Secondary active event",
+    };
+
+    render(
+      <CurtailmentHistory
+        events={[mockCurtailmentHistoryEvents[0], secondaryActiveEvent]}
+        activeEventId="curt-1042"
+        activeEventIds={["curt-secondary-active"]}
+        onManageActiveEvent={onManageActiveEvent}
+        onStopActiveEvent={onStopActiveEvent}
+      />,
+    );
+
+    const secondaryRow = screen.getByTestId("curtailment-history-row-curt-secondary-active");
+    await user.click(secondaryRow);
+    const modal = screen.getByTestId("modal");
+    await user.click(within(modal).getByRole("button", { name: "Manage" }));
+
+    expect(onManageActiveEvent).toHaveBeenCalledWith(secondaryActiveEvent);
+
+    await user.click(within(secondaryRow).getByRole("button", { name: "Stop Secondary active event" }));
+    await user.click(screen.getByRole("button", { name: "Confirm stop" }));
+
+    expect(onStopActiveEvent).toHaveBeenCalledWith(secondaryActiveEvent);
+  });
+
+  it("keeps multiple pending stop rows disabled independently", async () => {
+    const user = userEvent.setup();
+    const firstStopRequest = createPendingStopRequest();
+    const secondStopRequest = createPendingStopRequest();
+    const onStopActiveEvent = vi.fn((event: (typeof mockCurtailmentHistoryEvents)[number]) =>
+      event.id === "curt-1042" ? firstStopRequest : secondStopRequest,
+    );
+    const secondaryActiveEvent = {
+      ...mockCurtailmentHistoryEvents[0],
+      id: "curt-secondary-active",
+      reason: "Secondary active event",
+    };
+
+    render(
+      <CurtailmentHistory
+        events={[mockCurtailmentHistoryEvents[0], secondaryActiveEvent]}
+        activeEventId="curt-1042"
+        activeEventIds={["curt-secondary-active"]}
+        onStopActiveEvent={onStopActiveEvent}
+      />,
+    );
+
+    const firstRow = screen.getByTestId("curtailment-history-row-curt-1042");
+    const secondaryRow = screen.getByTestId("curtailment-history-row-curt-secondary-active");
+
+    await user.click(within(firstRow).getByRole("button", { name: "Stop ERCOT ERS obligation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm stop" }));
+    expect(within(firstRow).getByRole("button", { name: "Stop ERCOT ERS obligation" })).toBeDisabled();
+
+    await user.click(within(secondaryRow).getByRole("button", { name: "Stop Secondary active event" }));
+    await user.click(screen.getByRole("button", { name: "Confirm stop" }));
+
+    expect(onStopActiveEvent).toHaveBeenCalledTimes(2);
+    expect(within(firstRow).getByRole("button", { name: "Stop ERCOT ERS obligation" })).toBeDisabled();
+    expect(within(secondaryRow).getByRole("button", { name: "Stop Secondary active event" })).toBeDisabled();
   });
 
   it("re-enables stop actions when the stop request fails", async () => {

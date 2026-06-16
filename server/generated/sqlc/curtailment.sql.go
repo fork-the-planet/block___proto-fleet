@@ -320,62 +320,6 @@ func (q *Queries) EnsureCurtailmentOrgConfig(ctx context.Context, orgID int64) (
 	return i, err
 }
 
-const getActiveCurtailmentEvent = `-- name: GetActiveCurtailmentEvent :one
-SELECT id, event_uuid, org_id, state, mode, strategy, level, priority, loop_type, scope_type, scope_jsonb, mode_params_jsonb, restore_batch_size, restore_batch_interval_sec, effective_batch_size, min_curtailed_duration_sec, max_duration_seconds, allow_unbounded, include_maintenance, force_include_maintenance, decision_snapshot_jsonb, source_actor_type, source_actor_id, external_source, external_reference, idempotency_key, supersedes_event_id, reason, scheduled_start_at, started_at, ended_at, created_at, updated_at, created_by_user_id, curtail_batch_size, curtail_batch_interval_sec
-FROM curtailment_event
-WHERE org_id = $1
-    AND state IN ('pending', 'active', 'restoring')
-ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-LIMIT 1
-`
-
-// Most-recent non-terminal event for the org (several can coexist, one per
-// disjoint device scope). Ordered by effective time — created_at for pending
-// events so a fresh pending isn't buried behind older active ones — id tiebreak.
-func (q *Queries) GetActiveCurtailmentEvent(ctx context.Context, orgID int64) (CurtailmentEvent, error) {
-	row := q.queryRow(ctx, q.getActiveCurtailmentEventStmt, getActiveCurtailmentEvent, orgID)
-	var i CurtailmentEvent
-	err := row.Scan(
-		&i.ID,
-		&i.EventUuid,
-		&i.OrgID,
-		&i.State,
-		&i.Mode,
-		&i.Strategy,
-		&i.Level,
-		&i.Priority,
-		&i.LoopType,
-		&i.ScopeType,
-		&i.ScopeJsonb,
-		&i.ModeParamsJsonb,
-		&i.RestoreBatchSize,
-		&i.RestoreBatchIntervalSec,
-		&i.EffectiveBatchSize,
-		&i.MinCurtailedDurationSec,
-		&i.MaxDurationSeconds,
-		&i.AllowUnbounded,
-		&i.IncludeMaintenance,
-		&i.ForceIncludeMaintenance,
-		&i.DecisionSnapshotJsonb,
-		&i.SourceActorType,
-		&i.SourceActorID,
-		&i.ExternalSource,
-		&i.ExternalReference,
-		&i.IdempotencyKey,
-		&i.SupersedesEventID,
-		&i.Reason,
-		&i.ScheduledStartAt,
-		&i.StartedAt,
-		&i.EndedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CreatedByUserID,
-		&i.CurtailBatchSize,
-		&i.CurtailBatchIntervalSec,
-	)
-	return i, err
-}
-
 const getCurtailmentEventByExternalReference = `-- name: GetCurtailmentEventByExternalReference :one
 SELECT id, event_uuid, org_id, state, mode, strategy, level, priority, loop_type, scope_type, scope_jsonb, mode_params_jsonb, restore_batch_size, restore_batch_interval_sec, effective_batch_size, min_curtailed_duration_sec, max_duration_seconds, allow_unbounded, include_maintenance, force_include_maintenance, decision_snapshot_jsonb, source_actor_type, source_actor_id, external_source, external_reference, idempotency_key, supersedes_event_id, reason, scheduled_start_at, started_at, ended_at, created_at, updated_at, created_by_user_id, curtail_batch_size, curtail_batch_interval_sec
 FROM curtailment_event
@@ -973,25 +917,79 @@ func (q *Queries) ListActiveCurtailedDevicesByOrg(ctx context.Context, orgID int
 }
 
 const listActiveCurtailmentEvents = `-- name: ListActiveCurtailmentEvents :many
-SELECT id, event_uuid, org_id, state, mode, strategy, level, priority, loop_type, scope_type, scope_jsonb, mode_params_jsonb, restore_batch_size, restore_batch_interval_sec, effective_batch_size, min_curtailed_duration_sec, max_duration_seconds, allow_unbounded, include_maintenance, force_include_maintenance, decision_snapshot_jsonb, source_actor_type, source_actor_id, external_source, external_reference, idempotency_key, supersedes_event_id, reason, scheduled_start_at, started_at, ended_at, created_at, updated_at, created_by_user_id, curtail_batch_size, curtail_batch_interval_sec
+SELECT
+    id, event_uuid, org_id, state, mode, strategy, level, priority,
+    loop_type, scope_type, scope_jsonb, mode_params_jsonb,
+    curtail_batch_size, curtail_batch_interval_sec,
+    restore_batch_size, restore_batch_interval_sec, effective_batch_size,
+    min_curtailed_duration_sec, max_duration_seconds, allow_unbounded,
+    include_maintenance, force_include_maintenance,
+    '{}'::JSONB AS decision_snapshot_jsonb,
+    source_actor_type, source_actor_id,
+    external_source, external_reference, idempotency_key,
+    supersedes_event_id, reason, scheduled_start_at, started_at, ended_at,
+    created_at, updated_at, created_by_user_id
 FROM curtailment_event
 WHERE org_id = $1
     AND state IN ('pending', 'active', 'restoring')
 ORDER BY COALESCE(started_at, created_at) DESC, id DESC
 `
 
+type ListActiveCurtailmentEventsRow struct {
+	ID                      int64
+	EventUuid               uuid.UUID
+	OrgID                   int64
+	State                   string
+	Mode                    string
+	Strategy                string
+	Level                   string
+	Priority                string
+	LoopType                string
+	ScopeType               string
+	ScopeJsonb              json.RawMessage
+	ModeParamsJsonb         json.RawMessage
+	CurtailBatchSize        sql.NullInt32
+	CurtailBatchIntervalSec int32
+	RestoreBatchSize        int32
+	RestoreBatchIntervalSec int32
+	EffectiveBatchSize      sql.NullInt32
+	MinCurtailedDurationSec int32
+	MaxDurationSeconds      sql.NullInt32
+	AllowUnbounded          bool
+	IncludeMaintenance      bool
+	ForceIncludeMaintenance bool
+	DecisionSnapshotJsonb   json.RawMessage
+	SourceActorType         string
+	SourceActorID           sql.NullString
+	ExternalSource          sql.NullString
+	ExternalReference       sql.NullString
+	IdempotencyKey          sql.NullString
+	SupersedesEventID       sql.NullInt64
+	Reason                  string
+	ScheduledStartAt        sql.NullTime
+	StartedAt               sql.NullTime
+	EndedAt                 sql.NullTime
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+	CreatedByUserID         int64
+}
+
 // Org-scoped list of every non-terminal event. Multiple can be active when
 // they target disjoint device scopes (e.g. per-site curtailment). Most-recent
 // first by effective time (started_at, or created_at for pending), id tiebreak.
-func (q *Queries) ListActiveCurtailmentEvents(ctx context.Context, orgID int64) ([]CurtailmentEvent, error) {
+//
+// Active summaries intentionally omit the persisted decision snapshot. Polling
+// runs frequently and the response shape never exposes the snapshot; detail
+// callers use GetCurtailmentEventDetailByUUID instead.
+func (q *Queries) ListActiveCurtailmentEvents(ctx context.Context, orgID int64) ([]ListActiveCurtailmentEventsRow, error) {
 	rows, err := q.query(ctx, q.listActiveCurtailmentEventsStmt, listActiveCurtailmentEvents, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CurtailmentEvent
+	var items []ListActiveCurtailmentEventsRow
 	for rows.Next() {
-		var i CurtailmentEvent
+		var i ListActiveCurtailmentEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.EventUuid,
@@ -1005,6 +1003,8 @@ func (q *Queries) ListActiveCurtailmentEvents(ctx context.Context, orgID int64) 
 			&i.ScopeType,
 			&i.ScopeJsonb,
 			&i.ModeParamsJsonb,
+			&i.CurtailBatchSize,
+			&i.CurtailBatchIntervalSec,
 			&i.RestoreBatchSize,
 			&i.RestoreBatchIntervalSec,
 			&i.EffectiveBatchSize,
@@ -1027,8 +1027,6 @@ func (q *Queries) ListActiveCurtailmentEvents(ctx context.Context, orgID int64) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CreatedByUserID,
-			&i.CurtailBatchSize,
-			&i.CurtailBatchIntervalSec,
 		); err != nil {
 			return nil, err
 		}
@@ -1304,6 +1302,63 @@ func (q *Queries) ListCurtailmentEventsForOrg(ctx context.Context, arg ListCurta
 			&i.UpdatedAt,
 			&i.CreatedByUserID,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCurtailmentTargetSiteCoverageByEvent = `-- name: ListCurtailmentTargetSiteCoverageByEvent :many
+WITH target_sites AS (
+    SELECT d.site_id::BIGINT AS site_id
+    FROM curtailment_event ce
+    JOIN curtailment_target ct ON ct.curtailment_event_id = ce.id
+    LEFT JOIN device d ON d.org_id = ce.org_id
+        AND d.device_identifier = ct.device_identifier
+        AND d.deleted_at IS NULL
+    WHERE ce.org_id = $1
+        AND ce.event_uuid = $2
+)
+SELECT
+    COALESCE(site_id, 0)::BIGINT AS site_id,
+    COUNT(*) OVER ()::BIGINT AS target_count,
+    COUNT(site_id) OVER ()::BIGINT AS mapped_target_count
+FROM target_sites
+GROUP BY site_id
+ORDER BY site_id NULLS FIRST
+`
+
+type ListCurtailmentTargetSiteCoverageByEventParams struct {
+	OrgID     int64
+	EventUuid uuid.UUID
+}
+
+type ListCurtailmentTargetSiteCoverageByEventRow struct {
+	SiteID            int64
+	TargetCount       int64
+	MappedTargetCount int64
+}
+
+// Coverage for explicit-device event authorization. target_count is every
+// persisted target row; mapped_target_count includes only targets that still
+// resolve to a live device with a site. Any mismatch fails closed in handlers.
+func (q *Queries) ListCurtailmentTargetSiteCoverageByEvent(ctx context.Context, arg ListCurtailmentTargetSiteCoverageByEventParams) ([]ListCurtailmentTargetSiteCoverageByEventRow, error) {
+	rows, err := q.query(ctx, q.listCurtailmentTargetSiteCoverageByEventStmt, listCurtailmentTargetSiteCoverageByEvent, arg.OrgID, arg.EventUuid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCurtailmentTargetSiteCoverageByEventRow
+	for rows.Next() {
+		var i ListCurtailmentTargetSiteCoverageByEventRow
+		if err := rows.Scan(&i.SiteID, &i.TargetCount, &i.MappedTargetCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -234,9 +234,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.findDeviceSiteConflictsStmt, err = db.PrepareContext(ctx, findDeviceSiteConflicts); err != nil {
 		return nil, fmt.Errorf("error preparing query FindDeviceSiteConflicts: %w", err)
 	}
-	if q.getActiveCurtailmentEventStmt, err = db.PrepareContext(ctx, getActiveCurtailmentEvent); err != nil {
-		return nil, fmt.Errorf("error preparing query GetActiveCurtailmentEvent: %w", err)
-	}
 	if q.getActiveFleetNodeForDeviceStmt, err = db.PrepareContext(ctx, getActiveFleetNodeForDevice); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveFleetNodeForDevice: %w", err)
 	}
@@ -701,6 +698,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listCurtailmentResponseProfilesByOrgStmt, err = db.PrepareContext(ctx, listCurtailmentResponseProfilesByOrg); err != nil {
 		return nil, fmt.Errorf("error preparing query ListCurtailmentResponseProfilesByOrg: %w", err)
+	}
+	if q.listCurtailmentTargetSiteCoverageByEventStmt, err = db.PrepareContext(ctx, listCurtailmentTargetSiteCoverageByEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCurtailmentTargetSiteCoverageByEvent: %w", err)
 	}
 	if q.listCurtailmentTargetsByEventStmt, err = db.PrepareContext(ctx, listCurtailmentTargetsByEvent); err != nil {
 		return nil, fmt.Errorf("error preparing query ListCurtailmentTargetsByEvent: %w", err)
@@ -1549,11 +1549,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing findDeviceSiteConflictsStmt: %w", cerr)
 		}
 	}
-	if q.getActiveCurtailmentEventStmt != nil {
-		if cerr := q.getActiveCurtailmentEventStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getActiveCurtailmentEventStmt: %w", cerr)
-		}
-	}
 	if q.getActiveFleetNodeForDeviceStmt != nil {
 		if cerr := q.getActiveFleetNodeForDeviceStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveFleetNodeForDeviceStmt: %w", cerr)
@@ -2327,6 +2322,11 @@ func (q *Queries) Close() error {
 	if q.listCurtailmentResponseProfilesByOrgStmt != nil {
 		if cerr := q.listCurtailmentResponseProfilesByOrgStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listCurtailmentResponseProfilesByOrgStmt: %w", cerr)
+		}
+	}
+	if q.listCurtailmentTargetSiteCoverageByEventStmt != nil {
+		if cerr := q.listCurtailmentTargetSiteCoverageByEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCurtailmentTargetSiteCoverageByEventStmt: %w", cerr)
 		}
 	}
 	if q.listCurtailmentTargetsByEventStmt != nil {
@@ -3258,7 +3258,6 @@ type Queries struct {
 	deviceSetBelongsToOrgStmt                             *sql.Stmt
 	ensureCurtailmentOrgConfigStmt                        *sql.Stmt
 	findDeviceSiteConflictsStmt                           *sql.Stmt
-	getActiveCurtailmentEventStmt                         *sql.Stmt
 	getActiveFleetNodeForDeviceStmt                       *sql.Stmt
 	getActiveSchedulesStmt                                *sql.Stmt
 	getActiveUnpairedDiscoveredDevicesStmt                *sql.Stmt
@@ -3414,6 +3413,7 @@ type Queries struct {
 	listCurtailmentCandidatesByOrgStmt                    *sql.Stmt
 	listCurtailmentEventsForOrgStmt                       *sql.Stmt
 	listCurtailmentResponseProfilesByOrgStmt              *sql.Stmt
+	listCurtailmentTargetSiteCoverageByEventStmt          *sql.Stmt
 	listCurtailmentTargetsByEventStmt                     *sql.Stmt
 	listCurtailmentTargetsByEventPageStmt                 *sql.Stmt
 	listCustomRolesForOrgStmt                             *sql.Stmt
@@ -3654,7 +3654,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deviceSetBelongsToOrgStmt:                             q.deviceSetBelongsToOrgStmt,
 		ensureCurtailmentOrgConfigStmt:                        q.ensureCurtailmentOrgConfigStmt,
 		findDeviceSiteConflictsStmt:                           q.findDeviceSiteConflictsStmt,
-		getActiveCurtailmentEventStmt:                         q.getActiveCurtailmentEventStmt,
 		getActiveFleetNodeForDeviceStmt:                       q.getActiveFleetNodeForDeviceStmt,
 		getActiveSchedulesStmt:                                q.getActiveSchedulesStmt,
 		getActiveUnpairedDiscoveredDevicesStmt:                q.getActiveUnpairedDiscoveredDevicesStmt,
@@ -3810,6 +3809,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listCurtailmentCandidatesByOrgStmt:                    q.listCurtailmentCandidatesByOrgStmt,
 		listCurtailmentEventsForOrgStmt:                       q.listCurtailmentEventsForOrgStmt,
 		listCurtailmentResponseProfilesByOrgStmt:              q.listCurtailmentResponseProfilesByOrgStmt,
+		listCurtailmentTargetSiteCoverageByEventStmt:          q.listCurtailmentTargetSiteCoverageByEventStmt,
 		listCurtailmentTargetsByEventStmt:                     q.listCurtailmentTargetsByEventStmt,
 		listCurtailmentTargetsByEventPageStmt:                 q.listCurtailmentTargetsByEventPageStmt,
 		listCustomRolesForOrgStmt:                             q.listCustomRolesForOrgStmt,

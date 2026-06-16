@@ -94,10 +94,6 @@ func (s *startStubStore) GetEventDetailByUUID(context.Context, int64, uuid.UUID)
 	panic("GetEventDetailByUUID not exercised by handler Start tests")
 }
 
-func (s *startStubStore) GetActiveEvent(context.Context, int64) (*models.Event, error) {
-	panic("GetActiveEvent not exercised by handler Start tests")
-}
-
 func (s *startStubStore) ListActiveEvents(context.Context, int64) ([]*models.Event, error) {
 	panic("ListActiveEvents not exercised by handler Start tests")
 }
@@ -132,6 +128,10 @@ func (s *startStubStore) ListTargetsByEvent(_ context.Context, _ int64, eventUUI
 
 func (s *startStubStore) ListTargetsByEventPage(context.Context, interfaces.ListTargetsByEventPageParams) ([]*models.Target, string, error) {
 	panic("ListTargetsByEventPage not exercised by handler Start tests")
+}
+
+func (s *startStubStore) ListTargetSiteIDsByEvent(context.Context, int64, uuid.UUID) ([]int64, bool, error) {
+	panic("ListTargetSiteIDsByEvent not exercised by handler Start tests")
 }
 
 func (s *startStubStore) GetTargetRollupByEvent(context.Context, int64, uuid.UUID) (*models.TargetRollup, error) {

@@ -366,26 +366,52 @@ WHERE org_id = sqlc.arg('org_id')
 ORDER BY id DESC
 LIMIT sqlc.arg('row_limit')::BIGINT;
 
--- name: GetActiveCurtailmentEvent :one
--- Most-recent non-terminal event for the org (several can coexist, one per
--- disjoint device scope). Ordered by effective time — created_at for pending
--- events so a fresh pending isn't buried behind older active ones — id tiebreak.
-SELECT *
-FROM curtailment_event
-WHERE org_id = sqlc.arg('org_id')
-    AND state IN ('pending', 'active', 'restoring')
-ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-LIMIT 1;
-
 -- name: ListActiveCurtailmentEvents :many
 -- Org-scoped list of every non-terminal event. Multiple can be active when
 -- they target disjoint device scopes (e.g. per-site curtailment). Most-recent
 -- first by effective time (started_at, or created_at for pending), id tiebreak.
-SELECT *
+--
+-- Active summaries intentionally omit the persisted decision snapshot. Polling
+-- runs frequently and the response shape never exposes the snapshot; detail
+-- callers use GetCurtailmentEventDetailByUUID instead.
+SELECT
+    id, event_uuid, org_id, state, mode, strategy, level, priority,
+    loop_type, scope_type, scope_jsonb, mode_params_jsonb,
+    curtail_batch_size, curtail_batch_interval_sec,
+    restore_batch_size, restore_batch_interval_sec, effective_batch_size,
+    min_curtailed_duration_sec, max_duration_seconds, allow_unbounded,
+    include_maintenance, force_include_maintenance,
+    '{}'::JSONB AS decision_snapshot_jsonb,
+    source_actor_type, source_actor_id,
+    external_source, external_reference, idempotency_key,
+    supersedes_event_id, reason, scheduled_start_at, started_at, ended_at,
+    created_at, updated_at, created_by_user_id
 FROM curtailment_event
 WHERE org_id = sqlc.arg('org_id')
     AND state IN ('pending', 'active', 'restoring')
 ORDER BY COALESCE(started_at, created_at) DESC, id DESC;
+
+-- name: ListCurtailmentTargetSiteCoverageByEvent :many
+-- Coverage for explicit-device event authorization. target_count is every
+-- persisted target row; mapped_target_count includes only targets that still
+-- resolve to a live device with a site. Any mismatch fails closed in handlers.
+WITH target_sites AS (
+    SELECT d.site_id::BIGINT AS site_id
+    FROM curtailment_event ce
+    JOIN curtailment_target ct ON ct.curtailment_event_id = ce.id
+    LEFT JOIN device d ON d.org_id = ce.org_id
+        AND d.device_identifier = ct.device_identifier
+        AND d.deleted_at IS NULL
+    WHERE ce.org_id = sqlc.arg('org_id')
+        AND ce.event_uuid = sqlc.arg('event_uuid')
+)
+SELECT
+    COALESCE(site_id, 0)::BIGINT AS site_id,
+    COUNT(*) OVER ()::BIGINT AS target_count,
+    COUNT(site_id) OVER ()::BIGINT AS mapped_target_count
+FROM target_sites
+GROUP BY site_id
+ORDER BY site_id NULLS FIRST;
 
 -- name: BulkInsertCurtailmentTargets :execrows
 -- Bulk fan-out via jsonb_to_recordset: per-row fields ride in a JSONB

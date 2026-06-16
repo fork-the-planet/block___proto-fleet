@@ -25,7 +25,6 @@ import type {
 } from "@/protoFleet/features/settings/components/Curtailment/types";
 import { Alert } from "@/shared/assets/icons";
 import Button, { sizes, variants } from "@/shared/components/Button";
-import Dialog, { DialogIcon } from "@/shared/components/Dialog";
 import Header from "@/shared/components/Header";
 import ProgressCircular from "@/shared/components/ProgressCircular";
 
@@ -51,6 +50,7 @@ interface CurtailmentMessageProps {
 
 const activeCurtailmentRefreshIntervalMs = 3_000;
 const nonTerminalActiveEventStates = new Set<CurtailmentEventState>(["pending", "active", "restoring"]);
+const updateableCurtailmentEventStates = new Set<CurtailmentEventState>(["pending", "active"]);
 const defaultResponseDeadlineMinutes = "15";
 const defaultMaxDurationSec = "900";
 const immediateRestoreBatchSize = "10000";
@@ -152,6 +152,10 @@ function createActiveCurtailmentPreview(
   });
 }
 
+function canUpdateCurtailmentEvent(event: ActiveCurtailmentEvent): boolean {
+  return updateableCurtailmentEventStates.has(event.state);
+}
+
 function CurtailmentManagementPanel({
   canManageCurtailment = true,
   className,
@@ -159,6 +163,7 @@ function CurtailmentManagementPanel({
   const navigate = useNavigate();
   const {
     activeEvent,
+    activeEvents,
     activeEventId,
     activeEventFormValues,
     historyEvents,
@@ -178,6 +183,7 @@ function CurtailmentManagementPanel({
     refreshCurtailment,
     goToHistoryPage,
     setHistoryStatusFilters,
+    selectActiveCurtailment,
     startCurtailment,
     dismissTerminalCurtailment,
     updateCurtailment,
@@ -188,12 +194,14 @@ function CurtailmentManagementPanel({
     () => responseProfiles.map(createCurtailmentResponseProfileOption),
     [responseProfiles],
   );
+  const activeEventIds = useMemo(() => activeEvents.map((event) => event.id), [activeEvents]);
   const [modalMode, setModalMode] = useState<CurtailmentStartModalMode | null>(null);
   const [editSession, setEditSession] = useState<EditCurtailmentSession | null>(null);
   const [pendingStopConfirmation, setPendingStopConfirmation] = useState<PendingStopConfirmation | null>(null);
-  const [showActiveCurtailmentDialog, setShowActiveCurtailmentDialog] = useState(false);
   const refreshAbortControllerRef = useRef<AbortController | null>(null);
   const activeRefreshAbortControllerRef = useRef<AbortController | null>(null);
+  const manageSelectionAbortControllerRef = useRef<AbortController | null>(null);
+  const manageSelectionRequestIdRef = useRef(0);
   const foregroundRefreshInFlightRef = useRef(false);
   const errorMessage = startError ?? updateError ?? stopError ?? loadError;
   const isInitialLoading = isLoading && !activeEvent && historyEvents.length === 0;
@@ -201,8 +209,7 @@ function CurtailmentManagementPanel({
     pendingStopConfirmation !== null && stoppingEventId === pendingStopConfirmation.eventId;
   const isEditingCurtailment = modalMode === "edit";
   const isModalSubmitting = isEditingCurtailment ? isUpdating : isStarting;
-  const activeEventState = activeEvent?.state;
-  const hasOngoingCurtailment = activeEventState ? nonTerminalActiveEventStates.has(activeEventState) : false;
+  const hasOngoingCurtailment = activeEvents.some((event) => nonTerminalActiveEventStates.has(event.state));
   const hasOngoingHistoryEvent = historyEvents.some((event) => nonTerminalActiveEventStates.has(event.state));
   const shouldPollCurtailment = hasOngoingCurtailment || hasOngoingHistoryEvent;
 
@@ -265,33 +272,115 @@ function CurtailmentManagementPanel({
     };
   }, [refreshCurtailment, shouldPollCurtailment]);
 
-  const closeModal = useCallback(() => {
-    setModalMode(null);
-    setEditSession(null);
+  useEffect(
+    () => () => {
+      manageSelectionAbortControllerRef.current?.abort();
+    },
+    [],
+  );
+
+  const cancelManageSelection = useCallback(() => {
+    manageSelectionAbortControllerRef.current?.abort();
+    manageSelectionAbortControllerRef.current = null;
+    manageSelectionRequestIdRef.current += 1;
   }, []);
 
-  const openCreateModal = useCallback(() => {
-    if (hasOngoingCurtailment) {
-      setShowActiveCurtailmentDialog(true);
-      return;
-    }
+  const closeModal = useCallback(() => {
+    cancelManageSelection();
+    setModalMode(null);
+    setEditSession(null);
+  }, [cancelManageSelection]);
 
+  const openCreateModal = useCallback(() => {
+    cancelManageSelection();
     setEditSession(null);
     setModalMode("create");
-  }, [hasOngoingCurtailment]);
+  }, [cancelManageSelection]);
 
   const openEditModal = useCallback(() => {
     if (!canManageCurtailment || !activeEvent || !activeEventId || !activeEventFormValues) {
       return;
     }
 
+    cancelManageSelection();
     setEditSession({
       eventId: activeEventId,
       initialValues: activeEventFormValues,
       preview: createActiveCurtailmentPreview(activeEvent, activeEventFormValues),
     });
     setModalMode("edit");
-  }, [activeEvent, activeEventFormValues, activeEventId, canManageCurtailment]);
+  }, [activeEvent, activeEventFormValues, activeEventId, canManageCurtailment, cancelManageSelection]);
+
+  const openHistoryManageModal = useCallback(
+    (event: CurtailmentHistoryEvent) => {
+      if (!canManageCurtailment) {
+        return;
+      }
+
+      if (
+        event.id === activeEventId &&
+        activeEvent &&
+        activeEventFormValues &&
+        canUpdateCurtailmentEvent(activeEvent)
+      ) {
+        cancelManageSelection();
+        setEditSession({
+          eventId: activeEventId,
+          initialValues: activeEventFormValues,
+          preview: createActiveCurtailmentPreview(activeEvent, activeEventFormValues),
+        });
+        setModalMode("edit");
+        return;
+      }
+
+      manageSelectionAbortControllerRef.current?.abort();
+      const requestId = manageSelectionRequestIdRef.current + 1;
+      manageSelectionRequestIdRef.current = requestId;
+      const abortController = new AbortController();
+      manageSelectionAbortControllerRef.current = abortController;
+
+      void selectActiveCurtailment(event.id, { signal: abortController.signal })
+        .then(({ activeEvent: selectedActiveEvent, activeEventId: selectedActiveEventId, activeEventFormValues }) => {
+          if (
+            abortController.signal.aborted ||
+            manageSelectionRequestIdRef.current !== requestId ||
+            selectedActiveEventId !== event.id
+          ) {
+            return;
+          }
+
+          if (
+            !selectedActiveEvent ||
+            !selectedActiveEventId ||
+            !activeEventFormValues ||
+            !canUpdateCurtailmentEvent(selectedActiveEvent)
+          ) {
+            return;
+          }
+
+          setEditSession({
+            eventId: selectedActiveEventId,
+            initialValues: activeEventFormValues,
+            preview: createActiveCurtailmentPreview(selectedActiveEvent, activeEventFormValues),
+          });
+          setModalMode("edit");
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (manageSelectionAbortControllerRef.current === abortController) {
+            manageSelectionAbortControllerRef.current = null;
+          }
+        });
+    },
+    [
+      activeEvent,
+      activeEventFormValues,
+      activeEventId,
+      canManageCurtailment,
+      cancelManageSelection,
+      selectActiveCurtailment,
+    ],
+  );
 
   const openStopConfirmation = useCallback(
     (action: CurtailmentStopConfirmationAction, eventId = activeEventId) => {
@@ -299,9 +388,10 @@ function CurtailmentManagementPanel({
         return;
       }
 
+      cancelManageSelection();
       setPendingStopConfirmation({ action, eventId });
     },
-    [activeEventId, canManageCurtailment],
+    [activeEventId, canManageCurtailment, cancelManageSelection],
   );
 
   const handleStartSubmit = useCallback(
@@ -340,8 +430,11 @@ function CurtailmentManagementPanel({
   );
 
   const handleHistoryStop = useCallback(
-    (event: CurtailmentHistoryEvent) => stopCurtailment(event.id),
-    [stopCurtailment],
+    (event: CurtailmentHistoryEvent) => {
+      cancelManageSelection();
+      return stopCurtailment(event.id);
+    },
+    [cancelManageSelection, stopCurtailment],
   );
 
   const handleHistoryPageChange = useCallback(
@@ -363,10 +456,16 @@ function CurtailmentManagementPanel({
       return;
     }
 
+    const currentEvent = activeEvents.find((event) => event.id === pendingStopConfirmation.eventId);
+    if (!currentEvent || !nonTerminalActiveEventStates.has(currentEvent.state)) {
+      setPendingStopConfirmation(null);
+      return;
+    }
+
     void stopCurtailment(pendingStopConfirmation.eventId)
       .then(() => setPendingStopConfirmation(null))
       .catch(() => {});
-  }, [canManageCurtailment, pendingStopConfirmation, stopCurtailment]);
+  }, [activeEvents, canManageCurtailment, pendingStopConfirmation, stopCurtailment]);
 
   const handleEditStopCurtailment = useCallback(() => {
     const editEventId = editSession?.eventId ?? activeEventId;
@@ -423,6 +522,7 @@ function CurtailmentManagementPanel({
 
           <CurtailmentHistory
             activeEventId={activeEventId ?? undefined}
+            activeEventIds={activeEventIds}
             events={historyEvents}
             pageSize={historyPageSize}
             currentPage={historyCurrentPage}
@@ -431,6 +531,8 @@ function CurtailmentManagementPanel({
             selectedStatusFilters={historyStatusFilters}
             onPageChange={handleHistoryPageChange}
             onStatusFiltersChange={handleHistoryStatusFiltersChange}
+            onManageActiveEvent={canManageCurtailment ? openHistoryManageModal : undefined}
+            onStopActiveEventRequested={canManageCurtailment ? cancelManageSelection : undefined}
             onStopActiveEvent={canManageCurtailment ? handleHistoryStop : undefined}
           />
         </>
@@ -458,29 +560,6 @@ function CurtailmentManagementPanel({
           onCancel={() => setPendingStopConfirmation(null)}
           onConfirm={handleConfirmStop}
         />
-      ) : null}
-
-      {showActiveCurtailmentDialog ? (
-        <Dialog
-          open
-          title="Curtailment already active"
-          testId="active-curtailment-limit-dialog"
-          onDismiss={() => setShowActiveCurtailmentDialog(false)}
-          icon={
-            <DialogIcon intent="warning">
-              <Alert />
-            </DialogIcon>
-          }
-          buttons={[
-            {
-              text: "Got it",
-              variant: variants.primary,
-              onClick: () => setShowActiveCurtailmentDialog(false),
-            },
-          ]}
-        >
-          <div className="text-300 text-text-primary-70">You can only have one active curtailment at a time.</div>
-        </Dialog>
       ) : null}
     </section>
   );

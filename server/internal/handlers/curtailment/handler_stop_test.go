@@ -29,8 +29,6 @@ type stopStubStore struct {
 	event   *models.Event
 	targets []*models.Target
 
-	activeEvent       *models.Event
-	getActiveErr      error
 	getEventErr       error
 	listTargetsErr    error
 	beginRestoreErr   error
@@ -64,12 +62,6 @@ func (s *stopStubStore) GetEventByUUID(_ context.Context, _ int64, _ uuid.UUID) 
 func (s *stopStubStore) GetEventDetailByUUID(context.Context, int64, uuid.UUID) (*models.Event, error) {
 	panic("GetEventDetailByUUID not exercised by Stop handler tests")
 }
-func (s *stopStubStore) GetActiveEvent(_ context.Context, _ int64) (*models.Event, error) {
-	if s.getActiveErr != nil {
-		return nil, s.getActiveErr
-	}
-	return s.activeEvent, nil
-}
 func (s *stopStubStore) ListActiveEvents(context.Context, int64) ([]*models.Event, error) {
 	panic("ListActiveEvents not exercised by Stop handler tests")
 }
@@ -81,6 +73,9 @@ func (s *stopStubStore) ListTargetsByEvent(context.Context, int64, uuid.UUID) ([
 }
 func (s *stopStubStore) ListTargetsByEventPage(context.Context, interfaces.ListTargetsByEventPageParams) ([]*models.Target, string, error) {
 	panic("ListTargetsByEventPage not exercised by Stop handler tests")
+}
+func (s *stopStubStore) ListTargetSiteIDsByEvent(context.Context, int64, uuid.UUID) ([]int64, bool, error) {
+	panic("ListTargetSiteIDsByEvent not exercised by Stop handler tests")
 }
 func (s *stopStubStore) GetTargetRollupByEvent(context.Context, int64, uuid.UUID) (*models.TargetRollup, error) {
 	panic("GetTargetRollupByEvent not exercised by Stop handler tests")

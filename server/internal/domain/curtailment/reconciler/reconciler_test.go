@@ -100,9 +100,6 @@ func (f *fakeStore) GetEventByUUID(_ context.Context, orgID int64, eventUUID uui
 func (f *fakeStore) GetEventDetailByUUID(ctx context.Context, orgID int64, eventUUID uuid.UUID) (*models.Event, error) {
 	return f.GetEventByUUID(ctx, orgID, eventUUID)
 }
-func (f *fakeStore) GetActiveEvent(context.Context, int64) (*models.Event, error) {
-	panic("GetActiveEvent not exercised")
-}
 func (f *fakeStore) ListActiveEvents(context.Context, int64) ([]*models.Event, error) {
 	panic("ListActiveEvents not exercised")
 }
@@ -133,6 +130,10 @@ func (f *fakeStore) ListTargetsByEvent(ctx context.Context, _ int64, eventUUID u
 func (f *fakeStore) ListTargetsByEventPage(ctx context.Context, params interfaces.ListTargetsByEventPageParams) ([]*models.Target, string, error) {
 	targets, err := f.ListTargetsByEvent(ctx, params.OrgID, params.EventUUID)
 	return targets, "", err
+}
+
+func (f *fakeStore) ListTargetSiteIDsByEvent(context.Context, int64, uuid.UUID) ([]int64, bool, error) {
+	panic("ListTargetSiteIDsByEvent not exercised by reconciler tests")
 }
 
 func (f *fakeStore) GetTargetRollupByEvent(context.Context, int64, uuid.UUID) (*models.TargetRollup, error) {
