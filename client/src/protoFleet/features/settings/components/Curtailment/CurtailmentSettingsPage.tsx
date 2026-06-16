@@ -107,8 +107,12 @@ const curtailmentSourcesTableClassName = [
   "mb-2 w-full",
   "phone:table-fixed",
   "[&_thead_th]:text-text-primary-50",
-  "phone:[&_thead_th:last-child]:w-9",
-  "phone:[&_thead_th:last-child>div]:w-9",
+  "phone:[&_thead_th:last-child]:w-14",
+  "phone:[&_thead_th:last-child>div]:w-14",
+  "phone:[&_tbody_td[data-testid=enabled]:last-child>div:first-child]:box-border",
+  "phone:[&_tbody_td[data-testid=enabled]:last-child>div:first-child]:flex",
+  "phone:[&_tbody_td[data-testid=enabled]:last-child>div:first-child]:justify-end",
+  "phone:[&_tbody_td[data-testid=enabled]:last-child>div:first-child]:w-14",
 ].join(" ");
 
 const sourceHealthDotClassName: Record<CurtailmentHealth, string> = {
@@ -1043,7 +1047,7 @@ function createCurtailmentSourceColConfig({
     },
     [curtailmentSourceCols.lastSignalUpdate]: {
       component: (source) => <span className="truncate text-text-primary">{source.lastSeen}</span>,
-      width: "w-[23.5%] phone:w-auto",
+      width: "w-[23.5%] phone:hidden",
     },
     [curtailmentSourceCols.health]: {
       component: (source) => (
@@ -1070,7 +1074,7 @@ function createCurtailmentSourceColConfig({
           />
         </div>
       ),
-      width: "w-[6%] phone:w-9",
+      width: "w-[6%] phone:w-14",
     },
   };
 }
