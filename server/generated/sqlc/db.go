@@ -42,6 +42,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.assignBuildingToSiteStmt, err = db.PrepareContext(ctx, assignBuildingToSite); err != nil {
 		return nil, fmt.Errorf("error preparing query AssignBuildingToSite: %w", err)
 	}
+	if q.assignDevicesToSiteStmt, err = db.PrepareContext(ctx, assignDevicesToSite); err != nil {
+		return nil, fmt.Errorf("error preparing query AssignDevicesToSite: %w", err)
+	}
 	if q.assignPermissionToRoleStmt, err = db.PrepareContext(ctx, assignPermissionToRole); err != nil {
 		return nil, fmt.Errorf("error preparing query AssignPermissionToRole: %w", err)
 	}
@@ -861,9 +864,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.reapStuckProcessingMessagesStmt, err = db.PrepareContext(ctx, reapStuckProcessingMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query ReapStuckProcessingMessages: %w", err)
 	}
-	if q.reassignDevicesToSiteStmt, err = db.PrepareContext(ctx, reassignDevicesToSite); err != nil {
-		return nil, fmt.Errorf("error preparing query ReassignDevicesToSite: %w", err)
-	}
 	if q.reassignDevicesUnderBuildingStmt, err = db.PrepareContext(ctx, reassignDevicesUnderBuilding); err != nil {
 		return nil, fmt.Errorf("error preparing query ReassignDevicesUnderBuilding: %w", err)
 	}
@@ -872,6 +872,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.removeAllDevicesFromDeviceSetStmt, err = db.PrepareContext(ctx, removeAllDevicesFromDeviceSet); err != nil {
 		return nil, fmt.Errorf("error preparing query RemoveAllDevicesFromDeviceSet: %w", err)
+	}
+	if q.removeDevicesFromAnyRackStmt, err = db.PrepareContext(ctx, removeDevicesFromAnyRack); err != nil {
+		return nil, fmt.Errorf("error preparing query RemoveDevicesFromAnyRack: %w", err)
 	}
 	if q.removeDevicesFromDeviceSetStmt, err = db.PrepareContext(ctx, removeDevicesFromDeviceSet); err != nil {
 		return nil, fmt.Errorf("error preparing query RemoveDevicesFromDeviceSet: %w", err)
@@ -1221,6 +1224,11 @@ func (q *Queries) Close() error {
 	if q.assignBuildingToSiteStmt != nil {
 		if cerr := q.assignBuildingToSiteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing assignBuildingToSiteStmt: %w", cerr)
+		}
+	}
+	if q.assignDevicesToSiteStmt != nil {
+		if cerr := q.assignDevicesToSiteStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing assignDevicesToSiteStmt: %w", cerr)
 		}
 	}
 	if q.assignPermissionToRoleStmt != nil {
@@ -2588,11 +2596,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing reapStuckProcessingMessagesStmt: %w", cerr)
 		}
 	}
-	if q.reassignDevicesToSiteStmt != nil {
-		if cerr := q.reassignDevicesToSiteStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing reassignDevicesToSiteStmt: %w", cerr)
-		}
-	}
 	if q.reassignDevicesUnderBuildingStmt != nil {
 		if cerr := q.reassignDevicesUnderBuildingStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing reassignDevicesUnderBuildingStmt: %w", cerr)
@@ -2606,6 +2609,11 @@ func (q *Queries) Close() error {
 	if q.removeAllDevicesFromDeviceSetStmt != nil {
 		if cerr := q.removeAllDevicesFromDeviceSetStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing removeAllDevicesFromDeviceSetStmt: %w", cerr)
+		}
+	}
+	if q.removeDevicesFromAnyRackStmt != nil {
+		if cerr := q.removeDevicesFromAnyRackStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing removeDevicesFromAnyRackStmt: %w", cerr)
 		}
 	}
 	if q.removeDevicesFromDeviceSetStmt != nil {
@@ -3178,6 +3186,7 @@ type Queries struct {
 	adminTerminateCurtailmentEventStmt                    *sql.Stmt
 	allDevicesBelongToOrgStmt                             *sql.Stmt
 	assignBuildingToSiteStmt                              *sql.Stmt
+	assignDevicesToSiteStmt                               *sql.Stmt
 	assignPermissionToRoleStmt                            *sql.Stmt
 	assignRoleStmt                                        *sql.Stmt
 	beginCurtailmentRestorationStmt                       *sql.Stmt
@@ -3451,10 +3460,10 @@ type Queries struct {
 	queryErrorsStmt                                       *sql.Stmt
 	reapStuckFirmwareUpdateMessagesStmt                   *sql.Stmt
 	reapStuckProcessingMessagesStmt                       *sql.Stmt
-	reassignDevicesToSiteStmt                             *sql.Stmt
 	reassignDevicesUnderBuildingStmt                      *sql.Stmt
 	reassignRacksUnderBuildingStmt                        *sql.Stmt
 	removeAllDevicesFromDeviceSetStmt                     *sql.Stmt
+	removeDevicesFromAnyRackStmt                          *sql.Stmt
 	removeDevicesFromDeviceSetStmt                        *sql.Stmt
 	resetCurtailmentTargetsForRecurtailStmt               *sql.Stmt
 	resetCurtailmentTargetsForRestoreStmt                 *sql.Stmt
@@ -3572,6 +3581,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		adminTerminateCurtailmentEventStmt:                    q.adminTerminateCurtailmentEventStmt,
 		allDevicesBelongToOrgStmt:                             q.allDevicesBelongToOrgStmt,
 		assignBuildingToSiteStmt:                              q.assignBuildingToSiteStmt,
+		assignDevicesToSiteStmt:                               q.assignDevicesToSiteStmt,
 		assignPermissionToRoleStmt:                            q.assignPermissionToRoleStmt,
 		assignRoleStmt:                                        q.assignRoleStmt,
 		beginCurtailmentRestorationStmt:                       q.beginCurtailmentRestorationStmt,
@@ -3845,10 +3855,10 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		queryErrorsStmt:                                       q.queryErrorsStmt,
 		reapStuckFirmwareUpdateMessagesStmt:                   q.reapStuckFirmwareUpdateMessagesStmt,
 		reapStuckProcessingMessagesStmt:                       q.reapStuckProcessingMessagesStmt,
-		reassignDevicesToSiteStmt:                             q.reassignDevicesToSiteStmt,
 		reassignDevicesUnderBuildingStmt:                      q.reassignDevicesUnderBuildingStmt,
 		reassignRacksUnderBuildingStmt:                        q.reassignRacksUnderBuildingStmt,
 		removeAllDevicesFromDeviceSetStmt:                     q.removeAllDevicesFromDeviceSetStmt,
+		removeDevicesFromAnyRackStmt:                          q.removeDevicesFromAnyRackStmt,
 		removeDevicesFromDeviceSetStmt:                        q.removeDevicesFromDeviceSetStmt,
 		resetCurtailmentTargetsForRecurtailStmt:               q.resetCurtailmentTargetsForRecurtailStmt,
 		resetCurtailmentTargetsForRestoreStmt:                 q.resetCurtailmentTargetsForRestoreStmt,
