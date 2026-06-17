@@ -578,16 +578,24 @@ func (es *ExecutionService) executeCommandOnDevice(ctx context.Context, commandT
 			break
 		}
 
-		// Only evict after a successful DB write: the cached handle already has the new
-		// credentials and is the only valid session if DB sync fails.
-		// Proto devices (asymmetric auth) store no password in DB, so always evict.
-		if minerInfo.GetDriverName() != models.DriverNameProto {
-			if dbErr := es.updateMinerPasswordInDB(ctx, message.DeviceID, p.NewPassword); dbErr != nil {
-				slog.Error("device password updated but database sync failed",
-					"device_id", message.DeviceID, "error", dbErr)
-				break
-			}
+		// Surface a persistence failure as a command error: the on-device password
+		// already changed, so a silent success would leave Fleet with stale credentials.
+		if dbErr := es.persistMinerPassword(ctx, message.DeviceID, minerInfo.GetDriverName(), p.NewPassword); dbErr != nil {
+			slog.Error("device password updated but database sync failed",
+				"device_id", message.DeviceID, "error", dbErr)
+			err = fleeterror.NewInternalErrorf(
+				"device %d password changed on-device but credential persistence failed: %v",
+				message.DeviceID, dbErr)
+			break
 		}
+
+		// Clear the DEFAULT_PASSWORD remediation state (no-op for already-PAIRED rows).
+		if resetErr := es.deviceStore.UpdateDevicePairingStatusByIdentifier(
+			ctx, string(minerInfo.GetID()), string(sqlc.PairingStatusEnumPAIRED)); resetErr != nil {
+			slog.Error("password updated but pairing-status reset failed",
+				"device_id", message.DeviceID, "error", resetErr)
+		}
+
 		// Evict so the next lookup re-reads updated credentials from DB.
 		es.minerService.InvalidateMiner(minerInfo.GetID())
 	default:
@@ -1146,8 +1154,45 @@ func (es *ExecutionService) rebootAfterFirmwareInstall(ctx context.Context, mine
 	return nil
 }
 
+// protoDefaultUsername is the nominal username stored for Proto credentials; Proto
+// authenticates by password only, so it's cosmetic and used only when inserting a
+// row for a Proto device that has none (legacy key-based pairings stored none).
+const protoDefaultUsername = "admin"
+
+var errMinerCredentialsMissing = errors.New("no miner credentials row for device")
+
+// persistMinerPassword updates the device's stored password, inserting a row for
+// legacy Proto devices that have none.
+func (es *ExecutionService) persistMinerPassword(ctx context.Context, deviceID int64, driverName, password string) error {
+	err := es.updateMinerPasswordInDB(ctx, deviceID, password)
+	if errors.Is(err, errMinerCredentialsMissing) && driverName == models.DriverNameProto {
+		return es.insertProtoCredentials(ctx, deviceID, password)
+	}
+	return err
+}
+
+func (es *ExecutionService) insertProtoCredentials(ctx context.Context, deviceID int64, password string) error {
+	usernameEnc, err := es.encryptService.Encrypt([]byte(protoDefaultUsername))
+	if err != nil {
+		return fleeterror.NewInternalErrorf("failed to encrypt username: %v", err)
+	}
+	passwordEnc, err := es.encryptService.Encrypt([]byte(password))
+	if err != nil {
+		return fleeterror.NewInternalErrorf("failed to encrypt password: %v", err)
+	}
+
+	return db.WithTransactionNoResult(ctx, es.conn, func(q *sqlc.Queries) error {
+		return q.UpsertMinerCredentials(ctx, sqlc.UpsertMinerCredentialsParams{
+			DeviceID:    deviceID,
+			UsernameEnc: usernameEnc,
+			PasswordEnc: passwordEnc,
+		})
+	})
+}
+
 // updateMinerPasswordInDB encrypts and stores the miner password in the database
 // after successful password update on the device. Username remains unchanged.
+// Returns errMinerCredentialsMissing when no credentials row exists.
 func (es *ExecutionService) updateMinerPasswordInDB(ctx context.Context, deviceID int64, password string) error {
 	passwordEnc, err := es.encryptService.Encrypt([]byte(password))
 	if err != nil {
@@ -1164,9 +1209,8 @@ func (es *ExecutionService) updateMinerPasswordInDB(ctx context.Context, deviceI
 		return err
 	}
 
-	// If no rows were affected, credentials don't exist for this device (data integrity issue)
 	if rowsAffected == 0 {
-		return fleeterror.NewInternalErrorf("no credentials found for device %d - cannot update password", deviceID)
+		return errMinerCredentialsMissing
 	}
 
 	return nil

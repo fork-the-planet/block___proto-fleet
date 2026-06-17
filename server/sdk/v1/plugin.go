@@ -1332,10 +1332,11 @@ func (d *DeviceGRPCClient) TrySubscribe(ctx context.Context, ids []string) (<-ch
 // deviceMetricsToProto converts SDK DeviceMetrics to protobuf DeviceMetrics
 func deviceMetricsToProto(dm DeviceMetrics) *pb.DeviceMetrics {
 	pbMetrics := &pb.DeviceMetrics{
-		DeviceId:        dm.DeviceID,
-		Timestamp:       timestamppb.New(dm.Timestamp),
-		Health:          pb.HealthStatus(safeIntToInt32(int(dm.Health))),
-		FirmwareVersion: dm.FirmwareVersion,
+		DeviceId:              dm.DeviceID,
+		Timestamp:             timestamppb.New(dm.Timestamp),
+		Health:                pb.HealthStatus(safeIntToInt32(int(dm.Health))),
+		FirmwareVersion:       dm.FirmwareVersion,
+		DefaultPasswordActive: dm.DefaultPasswordActive,
 	}
 
 	if dm.HealthReason != nil {
@@ -1362,10 +1363,11 @@ func deviceMetricsToProto(dm DeviceMetrics) *pb.DeviceMetrics {
 // deviceMetricsFromProto converts protobuf DeviceMetrics to SDK DeviceMetrics
 func deviceMetricsFromProto(pb *pb.DeviceMetrics) DeviceMetrics {
 	dm := DeviceMetrics{
-		DeviceID:        pb.DeviceId,
-		Timestamp:       pb.Timestamp.AsTime(),
-		Health:          HealthStatus(pb.Health),
-		FirmwareVersion: pb.FirmwareVersion,
+		DeviceID:              pb.DeviceId,
+		Timestamp:             pb.Timestamp.AsTime(),
+		Health:                HealthStatus(pb.Health),
+		FirmwareVersion:       pb.FirmwareVersion,
+		DefaultPasswordActive: pb.DefaultPasswordActive,
 	}
 
 	if pb.HealthReason != nil {
@@ -1776,27 +1778,29 @@ func secretBundleFromProto(p *pb.SecretBundle) SecretBundle {
 // DeviceInfo conversion functions
 func deviceInfoToProto(d DeviceInfo) *pb.DeviceInfo {
 	return &pb.DeviceInfo{
-		Host:            d.Host,
-		Port:            d.Port,
-		UrlScheme:       d.URLScheme,
-		SerialNumber:    d.SerialNumber,
-		Model:           d.Model,
-		Manufacturer:    d.Manufacturer,
-		MacAddress:      d.MacAddress,
-		FirmwareVersion: d.FirmwareVersion,
+		Host:                  d.Host,
+		Port:                  d.Port,
+		UrlScheme:             d.URLScheme,
+		SerialNumber:          d.SerialNumber,
+		Model:                 d.Model,
+		Manufacturer:          d.Manufacturer,
+		MacAddress:            d.MacAddress,
+		FirmwareVersion:       d.FirmwareVersion,
+		DefaultPasswordActive: d.DefaultPasswordActive,
 	}
 }
 
 func deviceInfoFromProto(p *pb.DeviceInfo) DeviceInfo {
 	return DeviceInfo{
-		Host:            p.Host,
-		Port:            p.Port,
-		URLScheme:       p.UrlScheme,
-		SerialNumber:    p.SerialNumber,
-		Model:           p.Model,
-		Manufacturer:    p.Manufacturer,
-		MacAddress:      p.MacAddress,
-		FirmwareVersion: p.FirmwareVersion,
+		Host:                  p.Host,
+		Port:                  p.Port,
+		URLScheme:             p.UrlScheme,
+		SerialNumber:          p.SerialNumber,
+		Model:                 p.Model,
+		Manufacturer:          p.Manufacturer,
+		MacAddress:            p.MacAddress,
+		FirmwareVersion:       p.FirmwareVersion,
+		DefaultPasswordActive: p.DefaultPasswordActive,
 	}
 }
 

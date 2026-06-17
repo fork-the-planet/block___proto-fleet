@@ -482,6 +482,7 @@ impl AsicRsDevice {
             fan_metrics,
             sensor_metrics: vec![],
             firmware_version,
+            default_password_active: None,
         }
     }
 

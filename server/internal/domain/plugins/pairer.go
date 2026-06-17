@@ -185,6 +185,7 @@ func (p *Pairer) callPluginPairDevice(ctx context.Context, plugin *LoadedPlugin,
 	discoveredDevice.Model = updatedDeviceInfo.Model
 	discoveredDevice.Manufacturer = updatedDeviceInfo.Manufacturer
 	discoveredDevice.FirmwareVersion = updatedDeviceInfo.FirmwareVersion
+	discoveredDevice.DefaultPasswordActive = updatedDeviceInfo.DefaultPasswordActive
 
 	return nil
 }
@@ -262,13 +263,20 @@ func (p *Pairer) handlePairViaStore(
 			return err
 		}
 
-		if err := p.deviceStore.UpsertDevicePairing(ctx, &discoveredDevice.Device, discoveredDevice.OrgID, pairing.StatusPaired); err != nil {
+		// Record a factory-password device as DEFAULT_PASSWORD immediately (not
+		// PAIRED/ACTIVE) so the UI surfaces remediation without waiting for the poll.
+		pairingStatus := pairing.StatusPaired
+		initialStatus := models.MinerStatusActive
+		if discoveredDevice.DefaultPasswordActive != nil && *discoveredDevice.DefaultPasswordActive {
+			pairingStatus = pairing.StatusDefaultPassword
+			initialStatus = models.MinerStatusUnknown
+		}
+
+		if err := p.deviceStore.UpsertDevicePairing(ctx, &discoveredDevice.Device, discoveredDevice.OrgID, pairingStatus); err != nil {
 			return fleeterror.NewInternalErrorf("failed to upsert device pairing: %v", err)
 		}
 
-		// Set initial device status to ACTIVE since the miner was reachable during pairing
-		// This ensures the dashboard shows correct status immediately after pairing
-		if err := p.deviceStore.UpsertDeviceStatus(ctx, models.DeviceIdentifier(discoveredDevice.DeviceIdentifier), models.MinerStatusActive, ""); err != nil {
+		if err := p.deviceStore.UpsertDeviceStatus(ctx, models.DeviceIdentifier(discoveredDevice.DeviceIdentifier), initialStatus, ""); err != nil {
 			return fleeterror.NewInternalErrorf("failed to set initial device status: %v", err)
 		}
 

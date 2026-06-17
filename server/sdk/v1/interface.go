@@ -175,6 +175,11 @@ type DeviceMetrics struct {
 	Health       HealthStatus
 	HealthReason *string
 
+	// DefaultPasswordActive is non-nil only when the plugin determined the state:
+	// true means the rig still uses its factory password; nil means undetermined
+	// (e.g. probe failed) and consumers must not change remediation state.
+	DefaultPasswordActive *bool
+
 	// Device-level aggregated metrics
 	HashrateHS   *MetricValue
 	TempC        *MetricValue
@@ -338,6 +343,9 @@ type DeviceInfo struct {
 	Manufacturer    string // e.g., "Bitmain" (maps to proto 'manufacturer')
 	MacAddress      string // e.g., "00:1A:2B:3C:4D:5E" (maps to proto 'mac_address')
 	FirmwareVersion string // e.g., "1.2.3" (maps to proto 'firmware_version')
+	// DefaultPasswordActive is set by PairDevice: non-nil true means the device is
+	// paired but still on its factory password; nil means undetermined.
+	DefaultPasswordActive *bool
 }
 
 // HealthStatus represents the health status of a device
@@ -529,6 +537,7 @@ const (
 	CapabilityPoolPriority       = "pool_priority"        // Pool priority support
 	CapabilityNativeStratumV2    = "native_stratum_v2"    // Firmware speaks Stratum V2 natively
 	CapabilityLogsDownload       = "logs_download"        // Device logs download support
+	CapabilityLogLevels          = "log_levels"           // Device logs include a per-line log-level field
 	//#nosec G101 -- Capability constant name, not actual credentials
 	CapabilityUpdateMinerPassword = "update_miner_password" // Update miner web UI password support
 

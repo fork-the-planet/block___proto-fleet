@@ -698,6 +698,8 @@ func (s *Service) buildSnapshotsFromUnifiedQuery(
 			snapshot.PairingStatus = pb.PairingStatus_PAIRING_STATUS_PAIRED
 		case "AUTHENTICATION_NEEDED":
 			snapshot.PairingStatus = pb.PairingStatus_PAIRING_STATUS_AUTHENTICATION_NEEDED
+		case "DEFAULT_PASSWORD":
+			snapshot.PairingStatus = pb.PairingStatus_PAIRING_STATUS_DEFAULT_PASSWORD
 		case "PENDING":
 			snapshot.PairingStatus = pb.PairingStatus_PAIRING_STATUS_PENDING
 		case "FAILED":
@@ -708,7 +710,7 @@ func (s *Service) buildSnapshotsFromUnifiedQuery(
 			snapshot.PairingStatus = pb.PairingStatus_PAIRING_STATUS_UNPAIRED
 		}
 
-		isPaired := row.PairingStatus == "PAIRED"
+		isPaired := isPairedLikeStatus(row.PairingStatus)
 
 		snapshot.Name = ComposeDeviceName(row.CustomName.String, snapshot.Manufacturer, snapshot.Model)
 
@@ -749,10 +751,21 @@ const (
 	joulesPerHashToJoulesPerTeraHashMultiplier = 1e12
 )
 
+// isPairedLikeStatus reports whether a pairing_status is paired and reporting
+// telemetry. DEFAULT_PASSWORD is treated like PAIRED (its telemetry is trusted).
+func isPairedLikeStatus(status string) bool {
+	return status == "PAIRED" || status == "DEFAULT_PASSWORD"
+}
+
+func isPairedLikePairingStatus(status pb.PairingStatus) bool {
+	return status == pb.PairingStatus_PAIRING_STATUS_PAIRED ||
+		status == pb.PairingStatus_PAIRING_STATUS_DEFAULT_PASSWORD
+}
+
 func collectPairedDeviceIdentifiers(snapshots []*pb.MinerStateSnapshot) []string {
 	var ids []string
 	for _, s := range snapshots {
-		if s.PairingStatus == pb.PairingStatus_PAIRING_STATUS_PAIRED {
+		if isPairedLikePairingStatus(s.PairingStatus) {
 			ids = append(ids, s.DeviceIdentifier)
 		}
 	}
@@ -881,6 +894,7 @@ func shouldIncludeStateCounts(pairingStatuses []pb.PairingStatus) bool {
 		switch status {
 		case pb.PairingStatus_PAIRING_STATUS_PAIRED,
 			pb.PairingStatus_PAIRING_STATUS_AUTHENTICATION_NEEDED,
+			pb.PairingStatus_PAIRING_STATUS_DEFAULT_PASSWORD,
 			pb.PairingStatus_PAIRING_STATUS_UNSPECIFIED:
 			return true
 		case pb.PairingStatus_PAIRING_STATUS_UNPAIRED,
