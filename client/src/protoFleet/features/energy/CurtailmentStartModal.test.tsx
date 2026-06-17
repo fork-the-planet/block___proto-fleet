@@ -548,6 +548,33 @@ describe("CurtailmentStartModal", () => {
     expect(screen.getAllByLabelText("Loading curtailment preview")).toHaveLength(2);
   });
 
+  it("allows saving a response profile when live preview has no current curtailable load", async () => {
+    const user = userEvent.setup();
+    const previewError =
+      "insufficient curtailable load: 0.000 kW available, 0.000 kW requested, tolerance 0.000 kW, candidate_min_power_w=1500W; excluded: power_telemetry_unreliable=4, pairing=4, active_event=6";
+    mockUseCurtailmentPlanPreview.mockReturnValue({
+      preview: undefined,
+      previewError,
+      isPreviewLoading: false,
+    });
+    const { onSubmit } = renderModal({
+      variant: "responseProfile",
+      initialValues: configuredValues,
+      onTestCurtailment: vi.fn(),
+    });
+
+    expect(screen.queryByText(previewError)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Current fleet state is unavailable for preview.")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Run curtailment" })).toBeDisabled();
+
+    const saveButton = screen.getByRole("button", { name: "Save profile" });
+    expect(saveButton).toBeEnabled();
+
+    await user.click(saveButton);
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ reason: configuredValues.reason }));
+  });
+
   it("normalizes response profile initial scopes inside confirmation sentences", async () => {
     const user = userEvent.setup();
     renderModal({

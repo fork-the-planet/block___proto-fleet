@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { create, toJsonString } from "@bufbuild/protobuf";
 
 import { curtailmentClient } from "@/protoFleet/api/clients";
@@ -23,6 +23,7 @@ interface UseCurtailmentPlanPreviewOptions {
   values: CurtailmentFormValues;
   disabled?: boolean;
   debounceMs?: number;
+  refreshIntervalMs?: number;
 }
 
 type CurtailmentPlanPreviewRequestValues = Pick<
@@ -318,9 +319,11 @@ export function useCurtailmentPlanPreview({
   values,
   disabled = false,
   debounceMs = 300,
+  refreshIntervalMs = 10_000,
 }: UseCurtailmentPlanPreviewOptions): CurtailmentPlanPreviewResult {
   const { handleAuthErrors } = useAuthErrors();
   const [state, setState] = useState<CurtailmentPlanPreviewState>(emptyPreviewState);
+  const requestGenerationRef = useRef(0);
   const requestValues = useMemo<CurtailmentPlanPreviewRequestValues>(
     () => ({
       scopeType: values.scopeType,
@@ -371,6 +374,8 @@ export function useCurtailmentPlanPreview({
     let isActive = true;
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
+      const requestGeneration = requestGenerationRef.current + 1;
+      requestGenerationRef.current = requestGeneration;
       setState((current) => ({
         ...current,
         previewError: undefined,
@@ -381,7 +386,7 @@ export function useCurtailmentPlanPreview({
       void curtailmentClient
         .previewCurtailmentPlan(requestState.request, { signal: abortController.signal })
         .then((response) => {
-          if (!isActive) {
+          if (!isActive || requestGeneration !== requestGenerationRef.current) {
             return;
           }
 
@@ -407,14 +412,14 @@ export function useCurtailmentPlanPreview({
           });
         })
         .catch((error) => {
-          if (!isActive) {
+          if (!isActive || requestGeneration !== requestGenerationRef.current) {
             return;
           }
 
           handleAuthErrors({
             error,
             onError: (err) => {
-              if (!isActive) {
+              if (!isActive || requestGeneration !== requestGenerationRef.current) {
                 return;
               }
 
@@ -437,6 +442,90 @@ export function useCurtailmentPlanPreview({
       abortController.abort();
     };
   }, [debounceMs, disabled, handleAuthErrors, open, requestState, requestValues]);
+
+  useEffect(() => {
+    if (!open || disabled || refreshIntervalMs <= 0 || requestState === undefined) {
+      return;
+    }
+
+    let isActive = true;
+    let refreshInFlight = false;
+    const abortControllers = new Set<AbortController>();
+    const intervalId = setInterval(() => {
+      if (refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      const requestGeneration = requestGenerationRef.current + 1;
+      requestGenerationRef.current = requestGeneration;
+      const abortController = new AbortController();
+      abortControllers.add(abortController);
+
+      void curtailmentClient
+        .previewCurtailmentPlan(requestState.request, { signal: abortController.signal })
+        .then((response) => {
+          if (!isActive || requestGeneration !== requestGenerationRef.current) {
+            return;
+          }
+
+          if (response.candidates.length === 0) {
+            setState({
+              response: undefined,
+              responseRequestKey: undefined,
+              responseRequestValues: undefined,
+              previewError: emptyCandidatesPreviewError,
+              isPreviewLoading: false,
+              requestKey: requestState.requestKey,
+            });
+            return;
+          }
+
+          setState({
+            response,
+            responseRequestKey: requestState.requestKey,
+            responseRequestValues: cloneRequestValues(requestValues),
+            previewError: undefined,
+            isPreviewLoading: false,
+            requestKey: requestState.requestKey,
+          });
+        })
+        .catch((error) => {
+          if (!isActive || requestGeneration !== requestGenerationRef.current) {
+            return;
+          }
+
+          handleAuthErrors({
+            error,
+            onError: (err) => {
+              if (!isActive || requestGeneration !== requestGenerationRef.current) {
+                return;
+              }
+
+              setState({
+                response: undefined,
+                responseRequestKey: undefined,
+                responseRequestValues: undefined,
+                previewError: getErrorMessage(err, "Preview is unavailable."),
+                isPreviewLoading: false,
+                requestKey: requestState.requestKey,
+              });
+            },
+          });
+        })
+        .finally(() => {
+          refreshInFlight = false;
+          abortControllers.delete(abortController);
+        });
+    }, refreshIntervalMs);
+
+    return () => {
+      isActive = false;
+      clearInterval(intervalId);
+      abortControllers.forEach((abortController) => abortController.abort());
+      abortControllers.clear();
+    };
+  }, [disabled, handleAuthErrors, open, refreshIntervalMs, requestState, requestValues]);
 
   if (!open || disabled) {
     return emptyPreviewResult;

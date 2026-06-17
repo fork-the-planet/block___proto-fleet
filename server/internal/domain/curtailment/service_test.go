@@ -114,19 +114,26 @@ type fakeStore struct {
 	lastGetByExternalRefRef       string
 	getByIdempotencyKeyErr        error
 	getByExternalRefErr           error
+
+	// Automation demand fakes used by Stop's automation-owned restore guard.
+	automationRulesByEventUUID     map[uuid.UUID]*models.AutomationRule
+	automationRulesByExternalRef   map[string]*models.AutomationRule
+	automationDemandGuardCheckRuns int
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		orgConfigByOrg:       map[int64]*models.OrgConfig{},
-		activeDevicesByOrg:   map[int64][]string{},
-		cooldownDevicesByOrg: map[int64][]string{},
-		candidatesByOrg:      map[int64][]*models.Candidate{},
-		candidatesBySite:     map[int64]map[int64][]*models.Candidate{},
-		sitesByOrg:           map[int64]map[int64]bool{},
-		eventsByUUID:         map[uuid.UUID]*models.Event{},
-		targetsByEventUUID:   map[uuid.UUID][]*models.Target{},
-		nextEventID:          1,
+		orgConfigByOrg:               map[int64]*models.OrgConfig{},
+		activeDevicesByOrg:           map[int64][]string{},
+		cooldownDevicesByOrg:         map[int64][]string{},
+		candidatesByOrg:              map[int64][]*models.Candidate{},
+		candidatesBySite:             map[int64]map[int64][]*models.Candidate{},
+		sitesByOrg:                   map[int64]map[int64]bool{},
+		eventsByUUID:                 map[uuid.UUID]*models.Event{},
+		targetsByEventUUID:           map[uuid.UUID][]*models.Target{},
+		automationRulesByEventUUID:   map[uuid.UUID]*models.AutomationRule{},
+		automationRulesByExternalRef: map[string]*models.AutomationRule{},
+		nextEventID:                  1,
 	}
 }
 
@@ -389,11 +396,19 @@ func (f *fakeStore) UpsertHeartbeat(context.Context, interfaces.UpsertCurtailmen
 	panic("UpsertHeartbeat not exercised by Preview/Start/Stop tests")
 }
 
-func (f *fakeStore) BeginRestoreTransition(_ context.Context, _ int64, eventUUID uuid.UUID) (*models.Event, error) {
+func (f *fakeStore) BeginRestoreTransition(
+	_ context.Context,
+	_ int64,
+	eventUUID uuid.UUID,
+	params interfaces.BeginRestoreTransitionParams,
+) (*models.Event, error) {
 	f.beginRestoreCalls++
 	f.beginRestoreLastEventID = eventUUID
 	if f.beginRestoreErr != nil {
 		return nil, f.beginRestoreErr
+	}
+	if err := f.guardAutomationDemandForRestore(eventUUID, params.AutomationDemandGuard); err != nil {
+		return nil, err
 	}
 	// Default: mutate the seeded event copy so the test sees a 'restoring' echo.
 	ev, ok := f.eventsByUUID[eventUUID]
@@ -403,6 +418,32 @@ func (f *fakeStore) BeginRestoreTransition(_ context.Context, _ int64, eventUUID
 	updated := *ev
 	updated.State = models.EventStateRestoring
 	return &updated, nil
+}
+
+func (f *fakeStore) guardAutomationDemandForRestore(eventUUID uuid.UUID, guard *interfaces.AutomationDemandGuard) error {
+	if guard == nil {
+		return nil
+	}
+	f.automationDemandGuardCheckRuns++
+	ev := f.eventsByUUID[eventUUID]
+	if ev == nil {
+		return fleeterror.NewNotFoundErrorf("curtailment event not found: %s", eventUUID)
+	}
+	rule := f.automationRulesByEventUUID[eventUUID]
+	if (rule == nil || rule.OrgID != ev.OrgID || !rule.Enabled) && guard.ExternalReference != nil {
+		rule = f.automationRulesByExternalRef[*guard.ExternalReference]
+	}
+	if rule == nil || rule.OrgID != ev.OrgID || !rule.Enabled {
+		return nil
+	}
+	if rule.LastSignal == nil || *rule.LastSignal != models.AutomationSignalOff {
+		return nil
+	}
+	return fleeterror.NewFailedPreconditionErrorf(
+		"cannot restore automation-owned curtailment event %s while automation rule %q still has OFF asserted; use force=true to override",
+		eventUUID,
+		rule.RuleName,
+	)
 }
 
 func (f *fakeStore) BeginRecurtailTransition(_ context.Context, _ int64, eventUUID uuid.UUID) (*models.Event, error) {

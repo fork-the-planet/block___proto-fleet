@@ -33,12 +33,15 @@ type Scope struct {
 
 // PreviewRequest is the service-level shape of a Preview call.
 type PreviewRequest struct {
-	OrgID                      int64
-	Scope                      Scope
-	Mode                       models.Mode     // must be ModeFixedKw
-	Strategy                   models.Strategy // default StrategyLeastEfficientFirst
-	Level                      models.Level    // must be LevelFull
-	Priority                   models.Priority // PriorityNormal or PriorityEmergency (cooldown bypass)
+	OrgID    int64
+	Scope    Scope
+	Mode     models.Mode     // must be ModeFixedKw
+	Strategy models.Strategy // default StrategyLeastEfficientFirst
+	Level    models.Level    // must be LevelFull
+	Priority models.Priority // PriorityNormal or PriorityEmergency (cooldown bypass)
+	// BypassCooldown lets trusted internal callers skip post-event cooldown
+	// without changing the persisted priority/audit value on the event.
+	BypassCooldown             bool
 	TargetKW                   float64
 	ToleranceKW                float64
 	IncludeMaintenance         bool
@@ -931,8 +934,8 @@ func (s *Service) runSelector(ctx context.Context, req PreviewRequest) (*Plan, i
 		minPowerW = *req.CandidateMinPowerWOverride
 	}
 
-	// EMERGENCY skips post_event_cooldown_sec.
-	bypassCooldown := req.Priority == models.PriorityEmergency
+	// EMERGENCY and trusted automation starts skip post_event_cooldown_sec.
+	bypassCooldown := req.Priority == models.PriorityEmergency || req.BypassCooldown
 
 	activeDevices, err := s.store.ListActiveCurtailedDevices(ctx, req.OrgID)
 	if err != nil {
@@ -1073,6 +1076,9 @@ func validateStartRequest(req StartRequest) error {
 			return fleeterror.NewInvalidArgumentErrorf(
 				"external_source must be at most %d characters, got %d", startTextFieldMaxLen, n,
 			)
+		}
+		if strings.TrimSpace(*req.ExternalSource) == automationExternalSource && req.SourceActorType != models.SourceActorAutomation {
+			return fleeterror.NewInvalidArgumentError("external_source is reserved for curtailment automation")
 		}
 	}
 	if req.ExternalReference != nil {
@@ -1566,7 +1572,10 @@ func marshalScopeJSON(s Scope) ([]byte, error) {
 type StopRequest struct {
 	OrgID     int64
 	EventUUID uuid.UUID
-	Force     bool // admin-gated upstream; bypasses min_curtailed_duration_sec
+	Force     bool // admin-gated upstream; bypasses min_curtailed_duration_sec and automation demand guard
+	// AutomationRestore is set only by the automation executor while handling
+	// an ON signal from the owning source.
+	AutomationRestore bool
 }
 
 // Adaptive batch-sizing constants. [10, 100] is the inrush envelope, computed
@@ -1606,7 +1615,9 @@ func (s *Service) Stop(ctx context.Context, req StopRequest) (*models.Event, err
 		return nil, err
 	}
 
-	return s.store.BeginRestoreTransition(ctx, req.OrgID, req.EventUUID)
+	return s.store.BeginRestoreTransition(ctx, req.OrgID, req.EventUUID, interfaces.BeginRestoreTransitionParams{
+		AutomationDemandGuard: automationDemandGuardForStop(event, req),
+	})
 }
 
 // RecurtailRequest re-asserts curtailment on a restoring event.
@@ -1636,6 +1647,22 @@ func validateStopRequest(req StopRequest) error {
 		return fleeterror.NewInvalidArgumentError("event_uuid must be set")
 	}
 	return nil
+}
+
+func automationDemandGuardForStop(event *models.Event, req StopRequest) *interfaces.AutomationDemandGuard {
+	if event == nil || req.Force || req.AutomationRestore || !isAutomationOwnedEvent(event) {
+		return nil
+	}
+	return &interfaces.AutomationDemandGuard{
+		ExternalReference: event.ExternalReference,
+	}
+}
+
+func isAutomationOwnedEvent(event *models.Event) bool {
+	return event != nil &&
+		event.SourceActorType == models.SourceActorAutomation &&
+		event.ExternalSource != nil &&
+		*event.ExternalSource == automationExternalSource
 }
 
 // checkMinCurtailedDurationGate enforces `min_curtailed_duration_sec`
