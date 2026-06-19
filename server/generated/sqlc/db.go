@@ -45,6 +45,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.assignBuildingsToSiteBulkStmt, err = db.PrepareContext(ctx, assignBuildingsToSiteBulk); err != nil {
 		return nil, fmt.Errorf("error preparing query AssignBuildingsToSiteBulk: %w", err)
 	}
+	if q.assignDevicesToBuildingStmt, err = db.PrepareContext(ctx, assignDevicesToBuilding); err != nil {
+		return nil, fmt.Errorf("error preparing query AssignDevicesToBuilding: %w", err)
+	}
 	if q.assignDevicesToSiteStmt, err = db.PrepareContext(ctx, assignDevicesToSite); err != nil {
 		return nil, fmt.Errorf("error preparing query AssignDevicesToSite: %w", err)
 	}
@@ -78,8 +81,23 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.cancelPendingEnrollmentStmt, err = db.PrepareContext(ctx, cancelPendingEnrollment); err != nil {
 		return nil, fmt.Errorf("error preparing query CancelPendingEnrollment: %w", err)
 	}
+	if q.cascadeAddedDeviceBuildingsStmt, err = db.PrepareContext(ctx, cascadeAddedDeviceBuildings); err != nil {
+		return nil, fmt.Errorf("error preparing query CascadeAddedDeviceBuildings: %w", err)
+	}
 	if q.cascadeAddedDeviceSitesStmt, err = db.PrepareContext(ctx, cascadeAddedDeviceSites); err != nil {
 		return nil, fmt.Errorf("error preparing query CascadeAddedDeviceSites: %w", err)
+	}
+	if q.cascadeDevicesSiteForBuildingStmt, err = db.PrepareContext(ctx, cascadeDevicesSiteForBuilding); err != nil {
+		return nil, fmt.Errorf("error preparing query CascadeDevicesSiteForBuilding: %w", err)
+	}
+	if q.cascadeDirectDeviceSitesByBuildingsStmt, err = db.PrepareContext(ctx, cascadeDirectDeviceSitesByBuildings); err != nil {
+		return nil, fmt.Errorf("error preparing query CascadeDirectDeviceSitesByBuildings: %w", err)
+	}
+	if q.cascadeRackDeviceBuildingsStmt, err = db.PrepareContext(ctx, cascadeRackDeviceBuildings); err != nil {
+		return nil, fmt.Errorf("error preparing query CascadeRackDeviceBuildings: %w", err)
+	}
+	if q.cascadeRackDeviceBuildingsBulkStmt, err = db.PrepareContext(ctx, cascadeRackDeviceBuildingsBulk); err != nil {
+		return nil, fmt.Errorf("error preparing query CascadeRackDeviceBuildingsBulk: %w", err)
 	}
 	if q.cascadeRackDeviceSitesStmt, err = db.PrepareContext(ctx, cascadeRackDeviceSites); err != nil {
 		return nil, fmt.Errorf("error preparing query CascadeRackDeviceSites: %w", err)
@@ -92,6 +110,18 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.clearCurtailmentAutomationActiveEventStmt, err = db.PrepareContext(ctx, clearCurtailmentAutomationActiveEvent); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearCurtailmentAutomationActiveEvent: %w", err)
+	}
+	if q.clearDeviceBuildingsByBuildingStmt, err = db.PrepareContext(ctx, clearDeviceBuildingsByBuilding); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDeviceBuildingsByBuilding: %w", err)
+	}
+	if q.clearDeviceBuildingsBySiteStmt, err = db.PrepareContext(ctx, clearDeviceBuildingsBySite); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDeviceBuildingsBySite: %w", err)
+	}
+	if q.clearDeviceBuildingsOnSiteMismatchStmt, err = db.PrepareContext(ctx, clearDeviceBuildingsOnSiteMismatch); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDeviceBuildingsOnSiteMismatch: %w", err)
+	}
+	if q.clearDeviceSitesAndBuildingsStmt, err = db.PrepareContext(ctx, clearDeviceSitesAndBuildings); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDeviceSitesAndBuildings: %w", err)
 	}
 	if q.clearRackPlacementForSoftDeleteStmt, err = db.PrepareContext(ctx, clearRackPlacementForSoftDelete); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearRackPlacementForSoftDelete: %w", err)
@@ -243,8 +273,20 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.ensureCurtailmentOrgConfigStmt, err = db.PrepareContext(ctx, ensureCurtailmentOrgConfig); err != nil {
 		return nil, fmt.Errorf("error preparing query EnsureCurtailmentOrgConfig: %w", err)
 	}
+	if q.findDeviceBuildingConflictsStmt, err = db.PrepareContext(ctx, findDeviceBuildingConflicts); err != nil {
+		return nil, fmt.Errorf("error preparing query FindDeviceBuildingConflicts: %w", err)
+	}
 	if q.findDeviceSiteConflictsStmt, err = db.PrepareContext(ctx, findDeviceSiteConflicts); err != nil {
 		return nil, fmt.Errorf("error preparing query FindDeviceSiteConflicts: %w", err)
+	}
+	if q.findDevicesInBuildingLessPlacedRacksStmt, err = db.PrepareContext(ctx, findDevicesInBuildingLessPlacedRacks); err != nil {
+		return nil, fmt.Errorf("error preparing query FindDevicesInBuildingLessPlacedRacks: %w", err)
+	}
+	if q.findDevicesInSiteLessRacksStmt, err = db.PrepareContext(ctx, findDevicesInSiteLessRacks); err != nil {
+		return nil, fmt.Errorf("error preparing query FindDevicesInSiteLessRacks: %w", err)
+	}
+	if q.findDevicesWithSiteOrBuildingStmt, err = db.PrepareContext(ctx, findDevicesWithSiteOrBuilding); err != nil {
+		return nil, fmt.Errorf("error preparing query FindDevicesWithSiteOrBuilding: %w", err)
 	}
 	if q.getActiveFleetNodeForDeviceStmt, err = db.PrepareContext(ctx, getActiveFleetNodeForDevice); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveFleetNodeForDevice: %w", err)
@@ -305,6 +347,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getBuildingSiteStmt, err = db.PrepareContext(ctx, getBuildingSite); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBuildingSite: %w", err)
+	}
+	if q.getBuildingSiteIDStmt, err = db.PrepareContext(ctx, getBuildingSiteID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBuildingSiteID: %w", err)
 	}
 	if q.getBuiltinRoleForOrgStmt, err = db.PrepareContext(ctx, getBuiltinRoleForOrg); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBuiltinRoleForOrg: %w", err)
@@ -1044,6 +1089,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.transferDiscoveredDeviceAttributionStmt, err = db.PrepareContext(ctx, transferDiscoveredDeviceAttribution); err != nil {
 		return nil, fmt.Errorf("error preparing query TransferDiscoveredDeviceAttribution: %w", err)
 	}
+	if q.unassignDeviceBuildingsByRackStmt, err = db.PrepareContext(ctx, unassignDeviceBuildingsByRack); err != nil {
+		return nil, fmt.Errorf("error preparing query UnassignDeviceBuildingsByRack: %w", err)
+	}
 	if q.unassignDeviceSitesByRackStmt, err = db.PrepareContext(ctx, unassignDeviceSitesByRack); err != nil {
 		return nil, fmt.Errorf("error preparing query UnassignDeviceSitesByRack: %w", err)
 	}
@@ -1276,6 +1324,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing assignBuildingsToSiteBulkStmt: %w", cerr)
 		}
 	}
+	if q.assignDevicesToBuildingStmt != nil {
+		if cerr := q.assignDevicesToBuildingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing assignDevicesToBuildingStmt: %w", cerr)
+		}
+	}
 	if q.assignDevicesToSiteStmt != nil {
 		if cerr := q.assignDevicesToSiteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing assignDevicesToSiteStmt: %w", cerr)
@@ -1331,9 +1384,34 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing cancelPendingEnrollmentStmt: %w", cerr)
 		}
 	}
+	if q.cascadeAddedDeviceBuildingsStmt != nil {
+		if cerr := q.cascadeAddedDeviceBuildingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing cascadeAddedDeviceBuildingsStmt: %w", cerr)
+		}
+	}
 	if q.cascadeAddedDeviceSitesStmt != nil {
 		if cerr := q.cascadeAddedDeviceSitesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing cascadeAddedDeviceSitesStmt: %w", cerr)
+		}
+	}
+	if q.cascadeDevicesSiteForBuildingStmt != nil {
+		if cerr := q.cascadeDevicesSiteForBuildingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing cascadeDevicesSiteForBuildingStmt: %w", cerr)
+		}
+	}
+	if q.cascadeDirectDeviceSitesByBuildingsStmt != nil {
+		if cerr := q.cascadeDirectDeviceSitesByBuildingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing cascadeDirectDeviceSitesByBuildingsStmt: %w", cerr)
+		}
+	}
+	if q.cascadeRackDeviceBuildingsStmt != nil {
+		if cerr := q.cascadeRackDeviceBuildingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing cascadeRackDeviceBuildingsStmt: %w", cerr)
+		}
+	}
+	if q.cascadeRackDeviceBuildingsBulkStmt != nil {
+		if cerr := q.cascadeRackDeviceBuildingsBulkStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing cascadeRackDeviceBuildingsBulkStmt: %w", cerr)
 		}
 	}
 	if q.cascadeRackDeviceSitesStmt != nil {
@@ -1354,6 +1432,26 @@ func (q *Queries) Close() error {
 	if q.clearCurtailmentAutomationActiveEventStmt != nil {
 		if cerr := q.clearCurtailmentAutomationActiveEventStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearCurtailmentAutomationActiveEventStmt: %w", cerr)
+		}
+	}
+	if q.clearDeviceBuildingsByBuildingStmt != nil {
+		if cerr := q.clearDeviceBuildingsByBuildingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDeviceBuildingsByBuildingStmt: %w", cerr)
+		}
+	}
+	if q.clearDeviceBuildingsBySiteStmt != nil {
+		if cerr := q.clearDeviceBuildingsBySiteStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDeviceBuildingsBySiteStmt: %w", cerr)
+		}
+	}
+	if q.clearDeviceBuildingsOnSiteMismatchStmt != nil {
+		if cerr := q.clearDeviceBuildingsOnSiteMismatchStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDeviceBuildingsOnSiteMismatchStmt: %w", cerr)
+		}
+	}
+	if q.clearDeviceSitesAndBuildingsStmt != nil {
+		if cerr := q.clearDeviceSitesAndBuildingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDeviceSitesAndBuildingsStmt: %w", cerr)
 		}
 	}
 	if q.clearRackPlacementForSoftDeleteStmt != nil {
@@ -1606,9 +1704,29 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing ensureCurtailmentOrgConfigStmt: %w", cerr)
 		}
 	}
+	if q.findDeviceBuildingConflictsStmt != nil {
+		if cerr := q.findDeviceBuildingConflictsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findDeviceBuildingConflictsStmt: %w", cerr)
+		}
+	}
 	if q.findDeviceSiteConflictsStmt != nil {
 		if cerr := q.findDeviceSiteConflictsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing findDeviceSiteConflictsStmt: %w", cerr)
+		}
+	}
+	if q.findDevicesInBuildingLessPlacedRacksStmt != nil {
+		if cerr := q.findDevicesInBuildingLessPlacedRacksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findDevicesInBuildingLessPlacedRacksStmt: %w", cerr)
+		}
+	}
+	if q.findDevicesInSiteLessRacksStmt != nil {
+		if cerr := q.findDevicesInSiteLessRacksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findDevicesInSiteLessRacksStmt: %w", cerr)
+		}
+	}
+	if q.findDevicesWithSiteOrBuildingStmt != nil {
+		if cerr := q.findDevicesWithSiteOrBuildingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findDevicesWithSiteOrBuildingStmt: %w", cerr)
 		}
 	}
 	if q.getActiveFleetNodeForDeviceStmt != nil {
@@ -1709,6 +1827,11 @@ func (q *Queries) Close() error {
 	if q.getBuildingSiteStmt != nil {
 		if cerr := q.getBuildingSiteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBuildingSiteStmt: %w", cerr)
+		}
+	}
+	if q.getBuildingSiteIDStmt != nil {
+		if cerr := q.getBuildingSiteIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBuildingSiteIDStmt: %w", cerr)
 		}
 	}
 	if q.getBuiltinRoleForOrgStmt != nil {
@@ -2941,6 +3064,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing transferDiscoveredDeviceAttributionStmt: %w", cerr)
 		}
 	}
+	if q.unassignDeviceBuildingsByRackStmt != nil {
+		if cerr := q.unassignDeviceBuildingsByRackStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing unassignDeviceBuildingsByRackStmt: %w", cerr)
+		}
+	}
 	if q.unassignDeviceSitesByRackStmt != nil {
 		if cerr := q.unassignDeviceSitesByRackStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing unassignDeviceSitesByRackStmt: %w", cerr)
@@ -3307,6 +3435,7 @@ type Queries struct {
 	allDevicesBelongToOrgStmt                                  *sql.Stmt
 	assignBuildingToSiteStmt                                   *sql.Stmt
 	assignBuildingsToSiteBulkStmt                              *sql.Stmt
+	assignDevicesToBuildingStmt                                *sql.Stmt
 	assignDevicesToSiteStmt                                    *sql.Stmt
 	assignPermissionToRoleStmt                                 *sql.Stmt
 	assignRoleStmt                                             *sql.Stmt
@@ -3318,11 +3447,20 @@ type Queries struct {
 	bumpCurtailmentTargetRetryStmt                             *sql.Stmt
 	cancelEnrollmentForFleetNodeStmt                           *sql.Stmt
 	cancelPendingEnrollmentStmt                                *sql.Stmt
+	cascadeAddedDeviceBuildingsStmt                            *sql.Stmt
 	cascadeAddedDeviceSitesStmt                                *sql.Stmt
+	cascadeDevicesSiteForBuildingStmt                          *sql.Stmt
+	cascadeDirectDeviceSitesByBuildingsStmt                    *sql.Stmt
+	cascadeRackDeviceBuildingsStmt                             *sql.Stmt
+	cascadeRackDeviceBuildingsBulkStmt                         *sql.Stmt
 	cascadeRackDeviceSitesStmt                                 *sql.Stmt
 	cascadeRackDeviceSitesBulkStmt                             *sql.Stmt
 	claimMessageForProcessingStmt                              *sql.Stmt
 	clearCurtailmentAutomationActiveEventStmt                  *sql.Stmt
+	clearDeviceBuildingsByBuildingStmt                         *sql.Stmt
+	clearDeviceBuildingsBySiteStmt                             *sql.Stmt
+	clearDeviceBuildingsOnSiteMismatchStmt                     *sql.Stmt
+	clearDeviceSitesAndBuildingsStmt                           *sql.Stmt
 	clearRackPlacementForSoftDeleteStmt                        *sql.Stmt
 	clearRackSlotPositionStmt                                  *sql.Stmt
 	clearRolePermissionsStmt                                   *sql.Stmt
@@ -3373,7 +3511,11 @@ type Queries struct {
 	deviceHasActivePairingStmt                                 *sql.Stmt
 	deviceSetBelongsToOrgStmt                                  *sql.Stmt
 	ensureCurtailmentOrgConfigStmt                             *sql.Stmt
+	findDeviceBuildingConflictsStmt                            *sql.Stmt
 	findDeviceSiteConflictsStmt                                *sql.Stmt
+	findDevicesInBuildingLessPlacedRacksStmt                   *sql.Stmt
+	findDevicesInSiteLessRacksStmt                             *sql.Stmt
+	findDevicesWithSiteOrBuildingStmt                          *sql.Stmt
 	getActiveFleetNodeForDeviceStmt                            *sql.Stmt
 	getActiveSchedulesStmt                                     *sql.Stmt
 	getActiveUnpairedDiscoveredDevicesStmt                     *sql.Stmt
@@ -3394,6 +3536,7 @@ type Queries struct {
 	getBatchStatusAndDeviceCountsStmt                          *sql.Stmt
 	getBuildingStmt                                            *sql.Stmt
 	getBuildingSiteStmt                                        *sql.Stmt
+	getBuildingSiteIDStmt                                      *sql.Stmt
 	getBuiltinRoleForOrgStmt                                   *sql.Stmt
 	getCurtailmentAutomationRuleByOrgStmt                      *sql.Stmt
 	getCurtailmentEventByExternalReferenceStmt                 *sql.Stmt
@@ -3640,6 +3783,7 @@ type Queries struct {
 	sweepExpiredFleetNodeAuthChallengesStmt                    *sql.Stmt
 	sweepExpiredFleetNodeSessionsStmt                          *sql.Stmt
 	transferDiscoveredDeviceAttributionStmt                    *sql.Stmt
+	unassignDeviceBuildingsByRackStmt                          *sql.Stmt
 	unassignDeviceSitesByRackStmt                              *sql.Stmt
 	unassignDevicesFromSiteStmt                                *sql.Stmt
 	unassignRacksFromBuildingStmt                              *sql.Stmt
@@ -3717,6 +3861,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		allDevicesBelongToOrgStmt:                                  q.allDevicesBelongToOrgStmt,
 		assignBuildingToSiteStmt:                                   q.assignBuildingToSiteStmt,
 		assignBuildingsToSiteBulkStmt:                              q.assignBuildingsToSiteBulkStmt,
+		assignDevicesToBuildingStmt:                                q.assignDevicesToBuildingStmt,
 		assignDevicesToSiteStmt:                                    q.assignDevicesToSiteStmt,
 		assignPermissionToRoleStmt:                                 q.assignPermissionToRoleStmt,
 		assignRoleStmt:                                             q.assignRoleStmt,
@@ -3728,11 +3873,20 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		bumpCurtailmentTargetRetryStmt:                             q.bumpCurtailmentTargetRetryStmt,
 		cancelEnrollmentForFleetNodeStmt:                           q.cancelEnrollmentForFleetNodeStmt,
 		cancelPendingEnrollmentStmt:                                q.cancelPendingEnrollmentStmt,
+		cascadeAddedDeviceBuildingsStmt:                            q.cascadeAddedDeviceBuildingsStmt,
 		cascadeAddedDeviceSitesStmt:                                q.cascadeAddedDeviceSitesStmt,
+		cascadeDevicesSiteForBuildingStmt:                          q.cascadeDevicesSiteForBuildingStmt,
+		cascadeDirectDeviceSitesByBuildingsStmt:                    q.cascadeDirectDeviceSitesByBuildingsStmt,
+		cascadeRackDeviceBuildingsStmt:                             q.cascadeRackDeviceBuildingsStmt,
+		cascadeRackDeviceBuildingsBulkStmt:                         q.cascadeRackDeviceBuildingsBulkStmt,
 		cascadeRackDeviceSitesStmt:                                 q.cascadeRackDeviceSitesStmt,
 		cascadeRackDeviceSitesBulkStmt:                             q.cascadeRackDeviceSitesBulkStmt,
 		claimMessageForProcessingStmt:                              q.claimMessageForProcessingStmt,
 		clearCurtailmentAutomationActiveEventStmt:                  q.clearCurtailmentAutomationActiveEventStmt,
+		clearDeviceBuildingsByBuildingStmt:                         q.clearDeviceBuildingsByBuildingStmt,
+		clearDeviceBuildingsBySiteStmt:                             q.clearDeviceBuildingsBySiteStmt,
+		clearDeviceBuildingsOnSiteMismatchStmt:                     q.clearDeviceBuildingsOnSiteMismatchStmt,
+		clearDeviceSitesAndBuildingsStmt:                           q.clearDeviceSitesAndBuildingsStmt,
 		clearRackPlacementForSoftDeleteStmt:                        q.clearRackPlacementForSoftDeleteStmt,
 		clearRackSlotPositionStmt:                                  q.clearRackSlotPositionStmt,
 		clearRolePermissionsStmt:                                   q.clearRolePermissionsStmt,
@@ -3783,7 +3937,11 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deviceHasActivePairingStmt:                                 q.deviceHasActivePairingStmt,
 		deviceSetBelongsToOrgStmt:                                  q.deviceSetBelongsToOrgStmt,
 		ensureCurtailmentOrgConfigStmt:                             q.ensureCurtailmentOrgConfigStmt,
+		findDeviceBuildingConflictsStmt:                            q.findDeviceBuildingConflictsStmt,
 		findDeviceSiteConflictsStmt:                                q.findDeviceSiteConflictsStmt,
+		findDevicesInBuildingLessPlacedRacksStmt:                   q.findDevicesInBuildingLessPlacedRacksStmt,
+		findDevicesInSiteLessRacksStmt:                             q.findDevicesInSiteLessRacksStmt,
+		findDevicesWithSiteOrBuildingStmt:                          q.findDevicesWithSiteOrBuildingStmt,
 		getActiveFleetNodeForDeviceStmt:                            q.getActiveFleetNodeForDeviceStmt,
 		getActiveSchedulesStmt:                                     q.getActiveSchedulesStmt,
 		getActiveUnpairedDiscoveredDevicesStmt:                     q.getActiveUnpairedDiscoveredDevicesStmt,
@@ -3804,6 +3962,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBatchStatusAndDeviceCountsStmt:                          q.getBatchStatusAndDeviceCountsStmt,
 		getBuildingStmt:                                            q.getBuildingStmt,
 		getBuildingSiteStmt:                                        q.getBuildingSiteStmt,
+		getBuildingSiteIDStmt:                                      q.getBuildingSiteIDStmt,
 		getBuiltinRoleForOrgStmt:                                   q.getBuiltinRoleForOrgStmt,
 		getCurtailmentAutomationRuleByOrgStmt:                      q.getCurtailmentAutomationRuleByOrgStmt,
 		getCurtailmentEventByExternalReferenceStmt:                 q.getCurtailmentEventByExternalReferenceStmt,
@@ -4050,6 +4209,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		sweepExpiredFleetNodeAuthChallengesStmt:                    q.sweepExpiredFleetNodeAuthChallengesStmt,
 		sweepExpiredFleetNodeSessionsStmt:                          q.sweepExpiredFleetNodeSessionsStmt,
 		transferDiscoveredDeviceAttributionStmt:                    q.transferDiscoveredDeviceAttributionStmt,
+		unassignDeviceBuildingsByRackStmt:                          q.unassignDeviceBuildingsByRackStmt,
 		unassignDeviceSitesByRackStmt:                              q.unassignDeviceSitesByRackStmt,
 		unassignDevicesFromSiteStmt:                                q.unassignDevicesFromSiteStmt,
 		unassignRacksFromBuildingStmt:                              q.unassignRacksFromBuildingStmt,

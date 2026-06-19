@@ -83,4 +83,62 @@ type BuildingStore interface {
 	// rackIDs (parallel-aligned arrays). Used by
 	// AssignRacksToBuilding's pass-2 after pass-1 cleared cells.
 	SetRackBuildingPositionBulkPlace(ctx context.Context, orgID int64, rackIDs []int64, aisleIndexes, positionInAisles []int32) error
+
+	// AssignDevicesToBuilding bulk-updates device.building_id for the
+	// given identifiers. The caller must have validated cross-building
+	// conflicts (see FindDeviceBuildingConflicts) and that every
+	// identifier exists (see ListExistingDeviceIdentifiers on SiteStore).
+	// targetBuildingID == nil means "Unassigned".
+	AssignDevicesToBuilding(ctx context.Context, orgID int64, targetBuildingID *int64, deviceIdentifiers []string) (int64, error)
+
+	// CascadeDevicesSiteForBuilding sets device.site_id to the supplied
+	// target_site_id for any device in @device_identifiers whose
+	// site_id differs from target. Caller is responsible for matching
+	// targetSiteID to the building's site. Returns the count of
+	// devices actually cascaded.
+	CascadeDevicesSiteForBuilding(ctx context.Context, orgID int64, deviceIdentifiers []string, targetSiteID *int64) (int64, error)
+
+	// FindDeviceBuildingConflicts returns, for each requested device
+	// that is in a rack with a building_id, the device identifier and
+	// that rack's building_id. The caller compares against the
+	// requested target.
+	FindDeviceBuildingConflicts(ctx context.Context, orgID int64, deviceIdentifiers []string) (map[string]int64, error)
+
+	// FindDevicesInBuildingLessPlacedRacks returns the requested devices
+	// that sit in a rack which has a site but no building (a site-level
+	// rack). These can't take a direct building assignment while staying
+	// in the rack, so AssignDevicesToBuilding treats them as clearable
+	// conflicts for any non-null target. Fully-unassigned racks are
+	// excluded.
+	FindDevicesInBuildingLessPlacedRacks(ctx context.Context, orgID int64, deviceIdentifiers []string) ([]string, error)
+
+	// GetBuildingSiteID returns the building's site_id (nil when the
+	// building is unassigned). Returns NotFound when the building is
+	// missing / soft-deleted / cross-org.
+	GetBuildingSiteID(ctx context.Context, orgID, buildingID int64) (*int64, error)
+
+	// ClearDeviceBuildingsByBuilding nulls device.building_id for every
+	// direct-FK device pointing at the given building. Called by
+	// DeleteBuilding's soft-delete cascade so device references don't
+	// outlive the soft-deleted row.
+	ClearDeviceBuildingsByBuilding(ctx context.Context, orgID, buildingID int64) (int64, error)
+
+	// ClearDeviceBuildingsBySite nulls device.building_id for every
+	// direct-FK device whose building belongs to the given site.
+	// Called by DeleteSite's cascade.
+	ClearDeviceBuildingsBySite(ctx context.Context, orgID, siteID int64) (int64, error)
+
+	// CascadeDirectDeviceSitesByBuildings rewrites device.site_id to
+	// targetSiteID for devices joined to any building in buildingIDs
+	// via device.building_id. Mirror of ReassignDevicesUnderBuildingsBulk
+	// but for direct-FK devices (no rack involved).
+	CascadeDirectDeviceSitesByBuildings(ctx context.Context, orgID int64, buildingIDs []int64, targetSiteID *int64) (int64, error)
+
+	// ClearDeviceBuildingsOnSiteMismatch nulls device.building_id for
+	// the listed devices whose direct-FK building belongs to a site
+	// other than targetSiteID. Used by AssignDevicesToSite so a direct
+	// site move can't leave a device pointing at a building in the old
+	// site. Devices whose building is already in the target site (or
+	// with no building) are untouched.
+	ClearDeviceBuildingsOnSiteMismatch(ctx context.Context, orgID int64, deviceIdentifiers []string, targetSiteID *int64) (int64, error)
 }

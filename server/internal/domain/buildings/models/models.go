@@ -142,6 +142,60 @@ type AssignRacksToBuildingResult struct {
 	SiteReassignedDeviceCount int64
 }
 
+// PerDeviceBuildingConflictReason enumerates why a device was rejected
+// by AssignDevicesToBuilding.
+type PerDeviceBuildingConflictReason int
+
+const (
+	// ReasonBuildingUnspecified — default zero value, should never
+	// appear in emitted conflicts.
+	ReasonBuildingUnspecified PerDeviceBuildingConflictReason = 0
+	// ReasonBuildingDeviceNotFound — identifier doesn't match a live
+	// device in the org.
+	ReasonBuildingDeviceNotFound PerDeviceBuildingConflictReason = 1
+	// ReasonBuildingDeviceInRackAtOtherBuilding — device is in a rack
+	// whose building_id differs from the requested target.
+	ReasonBuildingDeviceInRackAtOtherBuilding PerDeviceBuildingConflictReason = 2
+	// ReasonBuildingDeviceInRackAtOtherSite — device is in a rack
+	// whose site_id differs from the target building's site. Covers
+	// the cross-site rack-without-building case the building-only
+	// conflict check misses. Cleared by the same force flag as
+	// IN_RACK_AT_OTHER_BUILDING.
+	ReasonBuildingDeviceInRackAtOtherSite PerDeviceBuildingConflictReason = 3
+)
+
+// PerDeviceBuildingConflict explains why a device was rejected by
+// AssignDevicesToBuilding. Mirrors the proto shape so the handler is a
+// thin translator.
+type PerDeviceBuildingConflict struct {
+	DeviceIdentifier      string
+	Reason                PerDeviceBuildingConflictReason
+	ConflictingBuildingID int64
+}
+
+// AssignDevicesToBuildingParams is the input shape for the bulk assign
+// flow. TargetBuildingID == nil means "Unassigned".
+//
+// When ForceClearConflictingRackMembership is true the service, inside
+// the same transaction as the building write, drops any existing rack
+// membership for devices whose rack is at a different building before
+// applying the building update. Mirrors AssignDevicesToSite's force-
+// clear semantic. When false (default), any device in a rack at a
+// different building rejects the whole batch with conflicts.
+type AssignDevicesToBuildingParams struct {
+	OrgID                               int64
+	TargetBuildingID                    *int64
+	DeviceIdentifiers                   []string
+	ForceClearConflictingRackMembership bool
+}
+
+// AssignDevicesToBuildingResult carries the rows touched + the count of
+// devices whose site_id was cascaded to the target building's site.
+type AssignDevicesToBuildingResult struct {
+	ReassignedCount           int64
+	SiteReassignedDeviceCount int64
+}
+
 // BuildingStats is the rollup returned by GetBuildingStats. Scope is
 // every device whose rack lives in the building.
 type BuildingStats struct {

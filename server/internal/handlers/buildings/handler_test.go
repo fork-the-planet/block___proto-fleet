@@ -354,6 +354,7 @@ func TestHandler_DeleteBuilding_surfacesRackCount(t *testing.T) {
 
 	h.buildingStore.EXPECT().SoftDeleteBuilding(gomock.Any(), int64(7), int64(33)).Return(int64(1), nil)
 	h.buildingStore.EXPECT().UnassignRacksFromBuilding(gomock.Any(), int64(7), int64(33)).Return(int64(5), nil)
+	h.buildingStore.EXPECT().ClearDeviceBuildingsByBuilding(gomock.Any(), int64(7), int64(33)).Return(int64(0), nil)
 
 	resp, err := h.handler.DeleteBuilding(sitePermsCtx(t, 7), connect.NewRequest(&pb.DeleteBuildingRequest{Id: 33}))
 	require.NoError(t, err)
@@ -436,6 +437,10 @@ func TestHandler_AssignRacksToBuilding_happy(t *testing.T) {
 			Return(int64(1), nil),
 		// Phase B2: single bulk cascade for site-changed rack.
 		h.collectionStore.EXPECT().CascadeRackDeviceSitesBulk(gomock.Any(), int64(7), []int64{99}, &siteID).
+			Return(int64(3), nil),
+		// Phase B2b: building cascade — rack moved nil → &buildingID, so
+		// device.building_id has to follow.
+		h.collectionStore.EXPECT().CascadeRackDeviceBuildingsBulk(gomock.Any(), int64(7), []int64{99}, &buildingID).
 			Return(int64(3), nil),
 		// Phase B3: bulk pass-1 vacate.
 		h.buildingStore.EXPECT().SetRackBuildingPositionBulkClear(gomock.Any(), int64(7), []int64{99}).

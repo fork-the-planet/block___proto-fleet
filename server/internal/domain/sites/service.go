@@ -236,6 +236,14 @@ func (s *Service) DeleteSite(ctx context.Context, orgID, id int64) (*models.Dele
 		if _, err := s.store.UnassignRacksFromBuildingsBySite(txCtx, orgID, id); err != nil {
 			return err
 		}
+		// Clear direct-FK device.building_id for any device whose
+		// building lives under this site, BEFORE the buildings get
+		// soft-deleted. Rack-membership devices are handled by the
+		// UnassignRacksFromBuildingsBySite call above; this covers
+		// the direct-assignment branch added in migration 000091.
+		if _, err := s.buildingStore.ClearDeviceBuildingsBySite(txCtx, orgID, id); err != nil {
+			return err
+		}
 		// Soft-delete buildings under the site.
 		deletedBuildings, err := s.store.SoftDeleteBuildingsBySite(txCtx, orgID, id)
 		if err != nil {
@@ -414,6 +422,15 @@ func (s *Service) AssignDevicesToSite(ctx context.Context, params models.AssignD
 			return attempt, txErr
 		}
 		attempt.rowsAffected = n
+		// A direct site move only writes device.site_id; a device with a
+		// direct-FK device.building_id pointing at a building in the old
+		// site would otherwise be left referencing a building in the
+		// wrong site. Clear building_id for any moved device whose
+		// building isn't in the new target site (devices already in a
+		// target-site building, or with no building, are untouched).
+		if _, err := s.buildingStore.ClearDeviceBuildingsOnSiteMismatch(txCtx, params.OrgID, identifiers, targetSiteID); err != nil {
+			return attempt, err
+		}
 		return attempt, nil
 	})
 	if err != nil {
@@ -552,12 +569,21 @@ func (s *Service) AssignBuildingsToSite(ctx context.Context, params models.Assig
 		rackCount = racks
 
 		// Phase B3: single bulk device cascade across every building
-		// in the batch.
+		// in the batch. Reaches devices via rack membership.
 		devices, err := s.store.ReassignDevicesUnderBuildingsBulk(txCtx, params.OrgID, buildingIDs, params.TargetSiteID)
 		if err != nil {
 			return nil, err
 		}
 		deviceCount = devices
+		// Phase B4: direct-FK device cascade. Devices with
+		// device.building_id pointing at any of the moved buildings
+		// (and no rack at all) wouldn't get touched by Phase B3's
+		// rack-path cascade — keep them in lockstep too.
+		directDevices, err := s.buildingStore.CascadeDirectDeviceSitesByBuildings(txCtx, params.OrgID, buildingIDs, params.TargetSiteID)
+		if err != nil {
+			return nil, err
+		}
+		deviceCount += directDevices
 		return assignBuildingsTx{rackCount: rackCount, deviceCount: deviceCount}, nil
 	})
 	if err != nil {
@@ -694,6 +720,20 @@ func (s *Service) AssignRacksToSite(ctx context.Context, params models.AssignRac
 				return nil, err
 			}
 			deviceCount += n
+
+			// Phase B3: building cascade. UpdateRackPlacementBulkForSite
+			// cleared rack.building_id for every cross-site move; the
+			// devices' building_id has to follow so they don't reference
+			// a building the device is no longer in. NOT routed through
+			// collection.cascadeRackMembersToPlacement: a cross-site move
+			// always pins building to nil regardless of its prior value, so
+			// this bulk path's gate genuinely differs from the single-rack
+			// paired helper — don't try to unify them.
+			if _, err := s.collectionStore.CascadeRackDeviceBuildingsBulk(
+				txCtx, params.OrgID, changedRackIDs, nil,
+			); err != nil {
+				return nil, err
+			}
 		}
 		return assignRacksToSiteTx{
 			deviceCount:     deviceCount,
@@ -793,6 +833,28 @@ func (s *Service) computeReassignConflicts(ctx context.Context, orgID int64, tar
 			Reason:            models.ReasonDeviceInRackAtOtherSite,
 			ConflictingSiteID: siteID,
 		})
+	}
+
+	// Site-less rack guard. A device in a fully-unassigned rack (no
+	// site) isn't returned by FindDeviceSiteConflicts (it filters
+	// dsr.site_id IS NOT NULL), yet it can't take a direct site while
+	// remaining in that rack without diverging from its rack's site.
+	// Flag those (clearable — force-clear drops the rack membership)
+	// whenever assigning to a real site. Skipped on unassign (target
+	// nil): a site-less rack member moving to Unassigned ends at site
+	// nil == rack site nil, already consistent. ConflictingSiteID stays
+	// 0 — the rack has no site, only the divergence is the conflict.
+	if targetSiteID != nil {
+		siteLess, err := s.store.FindDevicesInSiteLessRacks(ctx, orgID, identifiers)
+		if err != nil {
+			return nil, err
+		}
+		for _, ident := range siteLess {
+			conflicts = append(conflicts, models.PerDeviceConflict{
+				DeviceIdentifier: ident,
+				Reason:           models.ReasonDeviceInRackAtOtherSite,
+			})
+		}
 	}
 	// Deterministic order — siteByDevice is a map, so the
 	// rack-conflict branch above would otherwise emit conflicts

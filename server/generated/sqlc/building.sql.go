@@ -68,6 +68,33 @@ func (q *Queries) AssignBuildingsToSiteBulk(ctx context.Context, arg AssignBuild
 	return result.RowsAffected()
 }
 
+const assignDevicesToBuilding = `-- name: AssignDevicesToBuilding :execrows
+UPDATE device
+SET building_id = $1,
+    updated_at  = CURRENT_TIMESTAMP
+WHERE org_id = $2
+  AND device_identifier = ANY($3::text[])
+  AND deleted_at IS NULL
+`
+
+type AssignDevicesToBuildingParams struct {
+	TargetBuildingID  sql.NullInt64
+	OrgID             int64
+	DeviceIdentifiers []string
+}
+
+// Bulk update of device.building_id for the given identifiers within
+// the org. Caller is expected to have already validated that no device
+// is in a rack at a different building (see FindDeviceBuildingConflicts).
+// target_building_id NULL = move to Unassigned.
+func (q *Queries) AssignDevicesToBuilding(ctx context.Context, arg AssignDevicesToBuildingParams) (int64, error) {
+	result, err := q.exec(ctx, q.assignDevicesToBuildingStmt, assignDevicesToBuilding, arg.TargetBuildingID, arg.OrgID, pq.Array(arg.DeviceIdentifiers))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const buildingBelongsToOrg = `-- name: BuildingBelongsToOrg :one
 SELECT EXISTS(
     SELECT 1 FROM building
@@ -126,6 +153,159 @@ func (q *Queries) BuildingsByIDs(ctx context.Context, arg BuildingsByIDsParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const cascadeDevicesSiteForBuilding = `-- name: CascadeDevicesSiteForBuilding :execrows
+UPDATE device
+SET site_id    = $1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE org_id = $2
+  AND device_identifier = ANY($3::text[])
+  AND deleted_at IS NULL
+  AND site_id IS DISTINCT FROM $1
+`
+
+type CascadeDevicesSiteForBuildingParams struct {
+	TargetSiteID      sql.NullInt64
+	OrgID             int64
+	DeviceIdentifiers []string
+}
+
+// Sets device.site_id to the given target_site_id for every device in
+// @device_identifiers whose site_id differs from target. Returns the
+// count of devices actually cascaded so AssignDevicesToBuilding can
+// report site_reassigned_device_count. Caller has already row-locked
+// the devices via LockDevicesForReassign. target_site_id NULL = no
+// cascade (unassign-building branch).
+func (q *Queries) CascadeDevicesSiteForBuilding(ctx context.Context, arg CascadeDevicesSiteForBuildingParams) (int64, error) {
+	result, err := q.exec(ctx, q.cascadeDevicesSiteForBuildingStmt, cascadeDevicesSiteForBuilding, arg.TargetSiteID, arg.OrgID, pq.Array(arg.DeviceIdentifiers))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const cascadeDirectDeviceSitesByBuildings = `-- name: CascadeDirectDeviceSitesByBuildings :execrows
+UPDATE device
+SET site_id    = $1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE org_id = $2
+  AND building_id = ANY($3::bigint[])
+  AND deleted_at IS NULL
+  AND site_id IS DISTINCT FROM $1
+`
+
+type CascadeDirectDeviceSitesByBuildingsParams struct {
+	TargetSiteID sql.NullInt64
+	OrgID        int64
+	BuildingIds  []int64
+}
+
+// For devices with direct device.building_id pointing at any building
+// in @building_ids, rewrite device.site_id to target_site_id. Mirrors
+// ReassignDevicesUnderBuildingsBulk but for devices joined to the
+// building via device.building_id instead of through rack membership.
+// Used by AssignBuildingsToSite to keep direct-FK devices in lockstep
+// when the building's site changes.
+func (q *Queries) CascadeDirectDeviceSitesByBuildings(ctx context.Context, arg CascadeDirectDeviceSitesByBuildingsParams) (int64, error) {
+	result, err := q.exec(ctx, q.cascadeDirectDeviceSitesByBuildingsStmt, cascadeDirectDeviceSitesByBuildings, arg.TargetSiteID, arg.OrgID, pq.Array(arg.BuildingIds))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearDeviceBuildingsByBuilding = `-- name: ClearDeviceBuildingsByBuilding :execrows
+UPDATE device
+SET building_id = NULL,
+    updated_at  = CURRENT_TIMESTAMP
+WHERE org_id = $1
+  AND building_id = $2::bigint
+  AND deleted_at IS NULL
+`
+
+type ClearDeviceBuildingsByBuildingParams struct {
+	OrgID      int64
+	BuildingID int64
+}
+
+// Nulls device.building_id for every direct-FK device pointing at the
+// given building. Used by DeleteBuilding's soft-delete cascade so a
+// device.building_id can't outlive the building row it references.
+// Rack-membership devices keep their building association through the
+// rack itself; the rack-level cascade in DeleteBuilding handles them
+// via UnassignRacksFromBuilding + the cascade peer below.
+func (q *Queries) ClearDeviceBuildingsByBuilding(ctx context.Context, arg ClearDeviceBuildingsByBuildingParams) (int64, error) {
+	result, err := q.exec(ctx, q.clearDeviceBuildingsByBuildingStmt, clearDeviceBuildingsByBuilding, arg.OrgID, arg.BuildingID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearDeviceBuildingsBySite = `-- name: ClearDeviceBuildingsBySite :execrows
+UPDATE device d
+SET building_id = NULL,
+    updated_at  = CURRENT_TIMESTAMP
+FROM building b
+WHERE d.org_id = $1
+  AND d.building_id = b.id
+  AND b.org_id = $1
+  AND b.site_id = $2::bigint
+  AND d.deleted_at IS NULL
+`
+
+type ClearDeviceBuildingsBySiteParams struct {
+	OrgID  int64
+	SiteID int64
+}
+
+// Bulk peer of ClearDeviceBuildingsByBuilding scoped to a site: nulls
+// device.building_id for every direct-FK device whose building belongs
+// to the given site. Used by DeleteSite's soft-delete cascade so
+// buildings that get cascade-soft-deleted don't leave orphan device
+// references behind.
+func (q *Queries) ClearDeviceBuildingsBySite(ctx context.Context, arg ClearDeviceBuildingsBySiteParams) (int64, error) {
+	result, err := q.exec(ctx, q.clearDeviceBuildingsBySiteStmt, clearDeviceBuildingsBySite, arg.OrgID, arg.SiteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearDeviceBuildingsOnSiteMismatch = `-- name: ClearDeviceBuildingsOnSiteMismatch :execrows
+UPDATE device d
+SET building_id = NULL,
+    updated_at  = CURRENT_TIMESTAMP
+FROM building b
+WHERE d.org_id = $1
+  AND d.device_identifier = ANY($2::text[])
+  AND d.deleted_at IS NULL
+  AND d.building_id = b.id
+  AND b.org_id = $1
+  AND b.site_id IS DISTINCT FROM $3
+`
+
+type ClearDeviceBuildingsOnSiteMismatchParams struct {
+	OrgID             int64
+	DeviceIdentifiers []string
+	TargetSiteID      sql.NullInt64
+}
+
+// Nulls device.building_id for the listed devices whose direct-FK
+// building belongs to a site other than target_site_id. Used by
+// AssignDevicesToSite so a direct site move can't leave a device
+// pointing at a building in the old site. A device whose building is
+// already in the target site keeps it; a device with no building joins
+// no row and is untouched. target_site_id NULL (move to Unassigned)
+// clears any building whose site is non-null, and keeps a site-less
+// building (NULL IS DISTINCT FROM NULL = false).
+func (q *Queries) ClearDeviceBuildingsOnSiteMismatch(ctx context.Context, arg ClearDeviceBuildingsOnSiteMismatchParams) (int64, error) {
+	result, err := q.exec(ctx, q.clearDeviceBuildingsOnSiteMismatchStmt, clearDeviceBuildingsOnSiteMismatch, arg.OrgID, pq.Array(arg.DeviceIdentifiers), arg.TargetSiteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const createBuilding = `-- name: CreateBuilding :one
@@ -215,6 +395,123 @@ func (q *Queries) CreateBuilding(ctx context.Context, arg CreateBuildingParams) 
 	return i, err
 }
 
+const findDeviceBuildingConflicts = `-- name: FindDeviceBuildingConflicts :many
+SELECT d.device_identifier, dsr.building_id::bigint AS conflicting_building_id
+FROM device d
+JOIN device_set_membership dsm
+    ON dsm.device_id = d.id
+   AND dsm.org_id = d.org_id
+   AND dsm.device_set_type = 'rack'
+JOIN device_set ds
+    ON ds.id = dsm.device_set_id
+   AND ds.deleted_at IS NULL
+JOIN device_set_rack dsr
+    ON dsr.device_set_id = dsm.device_set_id
+   AND dsr.org_id = d.org_id
+WHERE d.org_id = $1
+  AND d.device_identifier = ANY($2::text[])
+  AND d.deleted_at IS NULL
+  AND dsr.building_id IS NOT NULL
+`
+
+type FindDeviceBuildingConflictsParams struct {
+	OrgID             int64
+	DeviceIdentifiers []string
+}
+
+type FindDeviceBuildingConflictsRow struct {
+	DeviceIdentifier      string
+	ConflictingBuildingID int64
+}
+
+// Returns one row per device whose live rack has a non-NULL
+// building_id. Devices with no rack, devices in a rack without a
+// building, and devices in soft-deleted racks produce NO row at all
+// (filtered by the `dsr.building_id IS NOT NULL` predicate + the
+// `ds.deleted_at IS NULL` JOIN). The service layer compares each
+// returned building_id against the target — devices missing from the
+// result set have no conflict to report.
+func (q *Queries) FindDeviceBuildingConflicts(ctx context.Context, arg FindDeviceBuildingConflictsParams) ([]FindDeviceBuildingConflictsRow, error) {
+	rows, err := q.query(ctx, q.findDeviceBuildingConflictsStmt, findDeviceBuildingConflicts, arg.OrgID, pq.Array(arg.DeviceIdentifiers))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindDeviceBuildingConflictsRow
+	for rows.Next() {
+		var i FindDeviceBuildingConflictsRow
+		if err := rows.Scan(&i.DeviceIdentifier, &i.ConflictingBuildingID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findDevicesInBuildingLessPlacedRacks = `-- name: FindDevicesInBuildingLessPlacedRacks :many
+SELECT d.device_identifier
+FROM device d
+JOIN device_set_membership dsm
+    ON dsm.device_id = d.id
+   AND dsm.org_id = d.org_id
+   AND dsm.device_set_type = 'rack'
+JOIN device_set ds
+    ON ds.id = dsm.device_set_id
+   AND ds.deleted_at IS NULL
+JOIN device_set_rack dsr
+    ON dsr.device_set_id = dsm.device_set_id
+   AND dsr.org_id = d.org_id
+WHERE d.org_id = $1
+  AND d.device_identifier = ANY($2::text[])
+  AND d.deleted_at IS NULL
+  AND dsr.building_id IS NULL
+  AND dsr.site_id IS NOT NULL
+`
+
+type FindDevicesInBuildingLessPlacedRacksParams struct {
+	OrgID             int64
+	DeviceIdentifiers []string
+}
+
+// Returns device identifiers that sit in a rack which HAS a site but
+// NO building (a site-level rack). FindDeviceBuildingConflicts filters
+// these out (its building_id IS NOT NULL guard), and the site-conflict
+// probe misses them when the target building is in the same site — yet
+// such a device can't take a direct building assignment while remaining
+// in a building-less rack without violating rack/device lockstep. The
+// service flags these as a clearable IN_RACK_AT_OTHER_BUILDING conflict
+// whenever the target building is non-null. Fully-unassigned racks
+// (no site AND no building) are excluded: they dictate no placement, so
+// a member may keep a direct building.
+func (q *Queries) FindDevicesInBuildingLessPlacedRacks(ctx context.Context, arg FindDevicesInBuildingLessPlacedRacksParams) ([]string, error) {
+	rows, err := q.query(ctx, q.findDevicesInBuildingLessPlacedRacksStmt, findDevicesInBuildingLessPlacedRacks, arg.OrgID, pq.Array(arg.DeviceIdentifiers))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var device_identifier string
+		if err := rows.Scan(&device_identifier); err != nil {
+			return nil, err
+		}
+		items = append(items, device_identifier)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getBuilding = `-- name: GetBuilding :one
 SELECT id, org_id, site_id, name, description, power_kw, overhead_kw, aisles, physical_rack_count, racks_per_aisle, default_rack_rows, default_rack_columns, default_rack_order_index, created_at, updated_at, deleted_at
 FROM building
@@ -250,6 +547,30 @@ func (q *Queries) GetBuilding(ctx context.Context, arg GetBuildingParams) (Build
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const getBuildingSiteID = `-- name: GetBuildingSiteID :one
+SELECT site_id
+FROM building
+WHERE id = $1
+  AND org_id = $2
+  AND deleted_at IS NULL
+`
+
+type GetBuildingSiteIDParams struct {
+	ID    int64
+	OrgID int64
+}
+
+// Returns the building's site_id (which may be NULL). Used by
+// AssignDevicesToBuilding to determine the cascade target for
+// device.site_id when target_building_id is set. Returns sql.ErrNoRows
+// when the building is missing/soft-deleted/cross-org.
+func (q *Queries) GetBuildingSiteID(ctx context.Context, arg GetBuildingSiteIDParams) (sql.NullInt64, error) {
+	row := q.queryRow(ctx, q.getBuildingSiteIDStmt, getBuildingSiteID, arg.ID, arg.OrgID)
+	var site_id sql.NullInt64
+	err := row.Scan(&site_id)
+	return site_id, err
 }
 
 const listBuildingRacks = `-- name: ListBuildingRacks :many

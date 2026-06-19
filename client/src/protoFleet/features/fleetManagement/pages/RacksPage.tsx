@@ -40,6 +40,7 @@ import { useFleetStore } from "@/protoFleet/store/useFleetStore";
 import { Alert, ArrowRight, ChevronDown, Edit, Plus, Racks } from "@/shared/assets/icons";
 import Button, { sizes, variants } from "@/shared/components/Button";
 import Callout from "@/shared/components/Callout";
+import Dialog from "@/shared/components/Dialog";
 import DropdownFilter from "@/shared/components/List/Filters/DropdownFilter";
 import FilterChipsBar from "@/shared/components/List/Filters/FilterChipsBar";
 import { SORT_ASC, SORT_DESC, type SortDirection } from "@/shared/components/List/types";
@@ -75,14 +76,30 @@ const RACK_COLUMNS_STANDALONE: DeviceSetColumn[] = [
   "health",
 ];
 
+// Subtitle copy for the "Move racks between sites?" building-clear
+// confirm. Falls back to a generic message when no building resolved or
+// the set is partial (unresolved) — naming a partial set would mislead.
+const siteClearSubtitle = (labels: string[], rackCount: number, unresolved: boolean): string => {
+  const rackNoun = rackCount === 1 ? "rack" : "racks";
+  const isAre = rackCount === 1 ? "is" : "are";
+  if (labels.length === 0 || unresolved) {
+    return `${rackCount} of the selected ${rackNoun} ${isAre} in a building that may belong to a different site. Continuing will remove ${rackCount === 1 ? "it" : "them"} from ${rackCount === 1 ? "that building" : "their buildings"} before moving to the selected site.`;
+  }
+  const labelSummary = labels.slice(0, 3).join(", ");
+  const more = labels.length > 3 ? ` and ${labels.length - 3} other building(s)` : "";
+  return `${rackCount} of the selected ${rackNoun} ${isAre} currently in ${labelSummary}${more}, which belong${labels.length === 1 ? "s" : ""} to a different site. Continuing will clear the rack ${labels.length === 1 ? "from that building" : "from those buildings"} before moving to the selected site.`;
+};
+
 const RacksPage = () => {
   const navigate = useNavigate();
   const { listRacks, listRackZones, deleteGroup } = useDeviceSets();
   const { listAllBuildings, assignRacksToBuilding } = useBuildings();
   const canEditRack = useHasPermission("rack:manage");
-  const canAssignRacksToBuilding = useHasPermission("site:manage");
-  const [reparentTarget, setReparentTarget] = useState<DeviceSet | null>(null);
-  const { listSites } = useSites();
+  // Both "Add to building" and "Add to site" reparent actions are gated
+  // by site:manage (server enforces the same). One flag, two actions.
+  const canManageSitePlacement = useHasPermission("site:manage");
+  const [reparentTarget, setReparentTarget] = useState<{ rack: DeviceSet; kind: "building" | "site" } | null>(null);
+  const { listSites, assignRacksToSite } = useSites();
   const [searchParams, setSearchParams] = useSearchParams();
   const { pathname } = useLocation();
   const insideFleetShell = pathname.startsWith("/fleet/");
@@ -123,6 +140,22 @@ const RacksPage = () => {
   const [allSites, setAllSites] = useState<{ id: string; label: string }[]>([]);
   const [selectedRackIds, setSelectedRackIds] = useState<string[]>([]);
   const [isBulkActionBusy, setIsBulkActionBusy] = useState(false);
+  const [bulkReparentKind, setBulkReparentKind] = useState<"building" | "site" | null>(null);
+  // Tracks the cross-site building-clear confirmation dialog. When a
+  // site move would null `device_set_rack.building_id` for any rack in
+  // the batch (because the rack's current building belongs to a
+  // different site), we park the dispatch behind a confirm prompt that
+  // mirrors the cross-site miner-reparent dialog in MinerReparentPicker.
+  const [siteClearConfirmation, setSiteClearConfirmation] = useState<{
+    affectedBuildingLabels: string[];
+    affectedRackCount: number;
+    // True when one or more affected racks couldn't be resolved to a
+    // building (metadata unavailable); the dialog falls back to a
+    // generic message instead of naming buildings.
+    unresolved: boolean;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [siteClearInFlight, setSiteClearInFlight] = useState(false);
 
   // listDeviceSets has no native siteIds filter, so we resolve
   // site → buildings client-side and pipe through buildingIds.
@@ -320,6 +353,155 @@ const RacksPage = () => {
 
   const siteNameById = useMemo(() => new Map(allSites.map((s) => [s.id, s.label])), [allSites]);
   const buildingNameById = useMemo(() => new Map(allBuildings.map((b) => [b.id, b.label])), [allBuildings]);
+  const buildingById = useMemo(() => new Map(allBuildings.map((b) => [b.id, b])), [allBuildings]);
+
+  // Detect racks whose `building_id` would be NULL'd by the upcoming
+  // AssignRacksToSite write (server clears building_id whenever the
+  // target site differs from the rack's current building's site).
+  // Returns the set of building labels we'd be evicting from and the
+  // number of distinct racks affected, so the confirm dialog can render
+  // an actionable summary. Returns null when nothing would be cleared,
+  // letting the caller skip the prompt and dispatch directly.
+  //
+  // `unresolved` flags racks that carry a building_id we can't classify
+  // because the org-scoped building metadata isn't available (the
+  // one-shot listAllBuildings is still loading, failed, or is stale).
+  // We can't tell whether the move crosses sites, but the server WILL
+  // clear building_id if it does — so these count toward the prompt
+  // rather than being silently skipped, which would let the move bypass
+  // the confirmation guard entirely.
+  const summarizeBuildingClearance = useCallback(
+    (
+      rackIds: bigint[],
+      targetSiteId: bigint,
+    ): { buildingLabels: string[]; rackCount: number; unresolved: boolean } | null => {
+      const wantedIds = new Set(rackIds.map((id) => id.toString()));
+      const targetSiteIdStr = targetSiteId.toString();
+      const labels = new Set<string>();
+      let count = 0;
+      let unresolved = false;
+      for (const rack of racks) {
+        if (!wantedIds.has(rack.id.toString())) continue;
+        if (rack.typeDetails.case !== "rackInfo") continue;
+        const buildingId = rack.typeDetails.value.buildingId;
+        if (buildingId === undefined) continue;
+        const building = buildingById.get(buildingId.toString());
+        if (!building) {
+          // Building metadata unavailable — can't classify this rack's
+          // move as cross-site or not. Prompt conservatively.
+          unresolved = true;
+          count += 1;
+          continue;
+        }
+        // Same site → server keeps building_id intact; nothing to warn about.
+        if (building.siteId === targetSiteIdStr) continue;
+        labels.add(building.label || "(unnamed)");
+        count += 1;
+      }
+      if (count === 0) return null;
+      return { buildingLabels: Array.from(labels), rackCount: count, unresolved };
+    },
+    [racks, buildingById],
+  );
+
+  // Outer picker promise resolver, parked here so the Dialog's
+  // Cancel button can settle it without dispatching the RPC. Cleared
+  // on every Continue/Cancel transition.
+  const siteClearResolveRef = useRef<((ok: boolean) => void) | null>(null);
+
+  // Wrap assignRacksToSite with the building-clearance confirm gate so
+  // every rack→site path (single-row + bulk) prompts before silently
+  // clearing rack.building_id on cross-site moves. Returns a promise
+  // that resolves true on success, false on operator cancel, and
+  // rejects on RPC failure so the picker's onConfirm chain stays
+  // identical to the no-confirm shape.
+  const dispatchRackSiteAssign = useCallback(
+    (rackIds: bigint[], targetSiteId: bigint, subjectLabel: string): Promise<boolean> => {
+      const performAssign = () =>
+        new Promise<boolean>((resolve, reject) => {
+          void assignRacksToSite({
+            rackIds,
+            targetSiteId,
+            onSuccess: () => {
+              pushToast({ message: `Moved ${subjectLabel} to selected site.`, status: STATUSES.success });
+              resetAndFetch();
+              resolve(true);
+            },
+            onError: (msg) => {
+              pushToast({ message: `Couldn't move ${subjectLabel}: ${msg}`, status: STATUSES.error });
+              reject(new Error(msg));
+            },
+          });
+        });
+
+      const clearance = summarizeBuildingClearance(rackIds, targetSiteId);
+      if (clearance === null) {
+        return performAssign();
+      }
+      return new Promise<boolean>((resolve, reject) => {
+        siteClearResolveRef.current = resolve;
+        setSiteClearConfirmation({
+          affectedBuildingLabels: clearance.buildingLabels,
+          affectedRackCount: clearance.rackCount,
+          unresolved: clearance.unresolved,
+          // The Dialog's Continue button awaits this; on success it
+          // resolves(true), on RPC failure rejects the outer picker
+          // promise so the modal surfaces an error toast and stays open.
+          onConfirm: async () => {
+            setSiteClearInFlight(true);
+            try {
+              const ok = await performAssign();
+              siteClearResolveRef.current = null;
+              setSiteClearInFlight(false);
+              setSiteClearConfirmation(null);
+              resolve(ok);
+            } catch (err) {
+              siteClearResolveRef.current = null;
+              setSiteClearInFlight(false);
+              setSiteClearConfirmation(null);
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          },
+        });
+      });
+    },
+    [assignRacksToSite, resetAndFetch, summarizeBuildingClearance],
+  );
+
+  // Building peer of dispatchRackSiteAssign, shared by the single-row and
+  // bulk rack→building paths. No building-clearance gate: a building move
+  // doesn't silently clear rack.building_id the way a cross-site move
+  // does. Resolves true on success, rejects on RPC failure so each
+  // caller's onConfirm chain stays identical to the site shape.
+  const dispatchRackBuildingAssign = useCallback(
+    (rackIds: bigint[], targetBuildingId: bigint, subjectLabel: string): Promise<boolean> =>
+      new Promise<boolean>((resolve, reject) => {
+        void assignRacksToBuilding({
+          racks: rackIds.map((rackId) => ({ rackId })),
+          targetBuildingId,
+          onSuccess: () => {
+            pushToast({ message: `Moved ${subjectLabel} to selected building.`, status: STATUSES.success });
+            resetAndFetch();
+            resolve(true);
+          },
+          onError: (msg) => {
+            pushToast({ message: `Couldn't move ${subjectLabel}: ${msg}`, status: STATUSES.error });
+            reject(new Error(msg));
+          },
+        });
+      }),
+    [assignRacksToBuilding, resetAndFetch],
+  );
+
+  // Wired to the Cancel button on the building-clear dialog. Resolves
+  // the outer picker promise as a no-op so ParentPickerModal closes
+  // without dispatching the RPC.
+  const cancelSiteClearConfirmation = useCallback(() => {
+    const resolve = siteClearResolveRef.current;
+    siteClearResolveRef.current = null;
+    setSiteClearConfirmation(null);
+    resolve?.(false);
+  }, []);
 
   // Surface buildings + sites to FleetLayout so the saved-view modal can
   // render human-readable labels when a view captures `building=` or
@@ -449,7 +631,11 @@ const RacksPage = () => {
     () =>
       racks.flatMap((rack) => {
         if (rack.id === 0n) return [];
-        return [{ kind: "rack" as const, id: rack.id, name: rack.label || "(unnamed)" }];
+        // Carry the rack's current building so the bulk Add-to-building
+        // dispatch can drop no-op moves (a same-building request without a
+        // grid position is treated server-side as an explicit unplace).
+        const buildingId = rack.typeDetails.case === "rackInfo" ? rack.typeDetails.value.buildingId : 0n;
+        return [{ kind: "rack" as const, id: rack.id, name: rack.label || "(unnamed)", buildingId }];
       }),
     [racks],
   );
@@ -559,8 +745,6 @@ const RacksPage = () => {
     setManageRackId(rack.id);
   }, []);
 
-  // Add-to-site stays deferred — no dedicated AssignRackToSite RPC,
-  // and SaveRack is a heavyweight full-replace.
   const buildRackExtraActions = useCallback(
     (rack: DeviceSet) => [
       {
@@ -583,11 +767,17 @@ const RacksPage = () => {
       {
         label: "Add to building",
         icon: <Plus />,
-        onClick: () => setReparentTarget(rack),
-        hidden: !canAssignRacksToBuilding,
+        onClick: () => setReparentTarget({ rack, kind: "building" }),
+        hidden: !canManageSitePlacement,
+      },
+      {
+        label: "Add to site",
+        icon: <Plus />,
+        onClick: () => setReparentTarget({ rack, kind: "site" }),
+        hidden: !canManageSitePlacement,
       },
     ],
-    [navigate, handleEditRack, canEditRack, canAssignRacksToBuilding],
+    [navigate, handleEditRack, canEditRack, canManageSitePlacement],
   );
 
   const renderName = useCallback(
@@ -945,9 +1135,73 @@ const RacksPage = () => {
         <FleetGroupListActionBar
           selectedScopes={selectedRackScopes}
           kind="rack"
+          bulkExtraActions={[
+            {
+              label: "Add to building",
+              icon: <Plus />,
+              testId: "fleet-bulk-rack-actions-add-to-building",
+              onClick: () => setBulkReparentKind("building"),
+              hidden: !canManageSitePlacement,
+            },
+            {
+              label: "Add to site",
+              icon: <Plus />,
+              testId: "fleet-bulk-rack-actions-add-to-site",
+              onClick: () => setBulkReparentKind("site"),
+              hidden: !canManageSitePlacement,
+            },
+          ]}
           onClearSelection={handleClearRackSelection}
           onSelectAllVisible={handleSelectAllVisibleRacks}
           onActionBusyChange={setIsBulkActionBusy}
+        />
+      ) : null}
+      {bulkReparentKind ? (
+        <ParentPickerModal
+          kind={bulkReparentKind}
+          show
+          selectionMode="single"
+          sourceLabel={
+            selectedRackScopes.length === 1 ? selectedRackScopes[0]!.name : `${selectedRackScopes.length} racks`
+          }
+          onDismiss={() => setBulkReparentKind(null)}
+          onConfirm={(parentIds) =>
+            new Promise<void>((resolve, reject) => {
+              const parentId = parentIds[0];
+              if (parentId === undefined) {
+                resolve();
+                return;
+              }
+              const buildingMode = bulkReparentKind === "building";
+              // Drop no-op building moves: a same-building request without a
+              // grid position is an explicit unplace server-side, so leaving
+              // already-in-building racks in the batch would silently clear
+              // their placement.
+              const rackIds = buildingMode
+                ? selectedRackScopes.filter((scope) => scope.buildingId !== parentId).map((scope) => scope.id)
+                : selectedRackScopes.map((scope) => scope.id);
+              if (buildingMode && rackIds.length === 0) {
+                pushToast({ message: "Selected racks are already in that building.", status: STATUSES.queued });
+                setBulkReparentKind(null);
+                setSelectedRackIds([]);
+                resolve();
+                return;
+              }
+              const subjectLabel = `${rackIds.length} ${rackIds.length === 1 ? "rack" : "racks"}`;
+              const dispatch = buildingMode
+                ? dispatchRackBuildingAssign(rackIds, parentId, subjectLabel)
+                : dispatchRackSiteAssign(rackIds, parentId, subjectLabel);
+              dispatch
+                .then((ok) => {
+                  if (ok) {
+                    setBulkReparentKind(null);
+                    setSelectedRackIds([]);
+                  }
+                  resolve();
+                })
+                .catch((err) => reject(err instanceof Error ? err : new Error(String(err))));
+            })
+          }
         />
       ) : null}
       {showRackSettingsModal ? (
@@ -970,43 +1224,88 @@ const RacksPage = () => {
       ) : null}
       {reparentTarget ? (
         <ParentPickerModal
-          kind="building"
+          kind={reparentTarget.kind}
           show
           selectionMode="single"
-          sourceLabel={reparentTarget.label || "rack"}
+          sourceLabel={reparentTarget.rack.label || "rack"}
           description={
-            reparentTarget.deviceCount > 0
-              ? `${reparentTarget.deviceCount} ${reparentTarget.deviceCount === 1 ? "miner" : "miners"} will move with this rack.`
+            reparentTarget.rack.deviceCount > 0
+              ? `${reparentTarget.rack.deviceCount} ${reparentTarget.rack.deviceCount === 1 ? "miner" : "miners"} will move with this rack.`
               : undefined
           }
           currentParentId={
-            reparentTarget.typeDetails.case === "rackInfo" ? reparentTarget.typeDetails.value.buildingId : undefined
+            reparentTarget.rack.typeDetails.case === "rackInfo"
+              ? reparentTarget.kind === "building"
+                ? reparentTarget.rack.typeDetails.value.buildingId
+                : reparentTarget.rack.typeDetails.value.siteId
+              : undefined
           }
           onDismiss={() => setReparentTarget(null)}
-          onConfirm={(buildingIds) =>
+          onConfirm={(parentIds) =>
             new Promise<void>((resolve, reject) => {
-              const buildingId = buildingIds[0];
-              if (buildingId === undefined) {
+              const parentId = parentIds[0];
+              if (parentId === undefined) {
                 resolve();
                 return;
               }
-              const rackName = reparentTarget.label || "rack";
-              void assignRacksToBuilding({
-                racks: [{ rackId: reparentTarget.id }],
-                targetBuildingId: buildingId,
-                onSuccess: () => {
-                  pushToast({ message: `Moved "${rackName}" to selected building.`, status: STATUSES.success });
-                  resetAndFetch();
-                  setReparentTarget(null);
+              const rackName = reparentTarget.rack.label || "rack";
+              const currentBuildingId =
+                reparentTarget.rack.typeDetails.case === "rackInfo"
+                  ? reparentTarget.rack.typeDetails.value.buildingId
+                  : 0n;
+              // No-op building move: a same-building request without a grid
+              // position is an explicit unplace server-side, so don't dispatch
+              // it (it would silently clear this rack's placement).
+              if (reparentTarget.kind === "building" && currentBuildingId === parentId) {
+                pushToast({ message: `"${rackName}" is already in that building.`, status: STATUSES.queued });
+                setReparentTarget(null);
+                resolve();
+                return;
+              }
+              const dispatch =
+                reparentTarget.kind === "building"
+                  ? dispatchRackBuildingAssign([reparentTarget.rack.id], parentId, `"${rackName}"`)
+                  : dispatchRackSiteAssign([reparentTarget.rack.id], parentId, `"${rackName}"`);
+              dispatch
+                .then((ok) => {
+                  if (ok) setReparentTarget(null);
                   resolve();
-                },
-                onError: (msg) => {
-                  pushToast({ message: `Couldn't move rack: ${msg}`, status: STATUSES.error });
-                  reject(new Error(msg));
-                },
-              });
+                })
+                .catch((err) => reject(err instanceof Error ? err : new Error(String(err))));
             })
           }
+        />
+      ) : null}
+      {siteClearConfirmation ? (
+        <Dialog
+          open
+          title="Move racks between sites?"
+          subtitle={siteClearSubtitle(
+            siteClearConfirmation.affectedBuildingLabels,
+            siteClearConfirmation.affectedRackCount,
+            siteClearConfirmation.unresolved,
+          )}
+          onDismiss={() => {
+            if (siteClearInFlight) return;
+            cancelSiteClearConfirmation();
+          }}
+          buttons={[
+            {
+              text: "Cancel",
+              variant: variants.secondary,
+              onClick: cancelSiteClearConfirmation,
+              disabled: siteClearInFlight,
+            },
+            {
+              text: "Continue",
+              variant: variants.primary,
+              onClick: () => {
+                void siteClearConfirmation.onConfirm();
+              },
+              loading: siteClearInFlight,
+              disabled: siteClearInFlight,
+            },
+          ]}
         />
       ) : null}
     </div>
