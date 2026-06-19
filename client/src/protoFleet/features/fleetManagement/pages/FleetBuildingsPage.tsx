@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import BuildingList from "../components/BuildingList";
@@ -8,7 +8,7 @@ import { useFleetOutletContext } from "../components/FleetLayout";
 import { useBuildings } from "@/protoFleet/api/buildings";
 import { type BuildingWithCounts } from "@/protoFleet/api/generated/buildings/v1/buildings_pb";
 import { buildKnownSiteIds, useSites } from "@/protoFleet/api/sites";
-import { useActiveSite } from "@/protoFleet/components/PageHeader/SitePicker";
+import { siteFilterFromActive, useActiveSite } from "@/protoFleet/components/PageHeader/SitePicker";
 import ParentPickerModal from "@/protoFleet/components/ParentPickerModal";
 import { POLL_INTERVAL_MS } from "@/protoFleet/constants/polling";
 import BuildingModals from "@/protoFleet/features/buildings/components/BuildingModals";
@@ -26,39 +26,11 @@ const LIST_WRAPPER = "pt-6";
 const FleetBuildingsPage = () => {
   const { sites, sitesError, refetchSites } = useFleetOutletContext();
 
-  const { listAllBuildings } = useBuildings();
+  const { listBuildings } = useBuildings();
   const [buildings, setBuildings] = useState<BuildingWithCounts[] | undefined>(undefined);
   const [buildingsError, setBuildingsError] = useState<string | null>(null);
   const [selectedBuildingIds, setSelectedBuildingIds] = useState<string[]>([]);
   const [isBulkActionBusy, setIsBulkActionBusy] = useState(false);
-
-  // Returning the promise lets usePoll schedule the next tick from response
-  // completion (not from request start) so slow responses can't overlap.
-  const fetchBuildings = useCallback(
-    () =>
-      listAllBuildings({
-        onSuccess: (rows) => {
-          setBuildings(rows);
-          setBuildingsError(null);
-        },
-        onError: (msg) => {
-          setBuildingsError(msg);
-          // Preserve last-good list across transient errors; only fall to []
-          // on the initial-load failure path.
-          setBuildings((prev) => prev ?? []);
-        },
-      }),
-    [listAllBuildings],
-  );
-
-  // Gate the poll on site:read — same gate FleetLayout uses to redirect.
-  const canReadBuildings = useHasPermission("site:read");
-  usePoll({
-    fetchData: fetchBuildings,
-    poll: true,
-    pollIntervalMs: POLL_INTERVAL_MS,
-    enabled: canReadBuildings,
-  });
 
   const knownSiteIds = useMemo(() => buildKnownSiteIds(sites), [sites]);
   const { activeSite } = useActiveSite({ knownSiteIds });
@@ -68,26 +40,97 @@ const FleetBuildingsPage = () => {
   const [searchParams] = useSearchParams();
   const urlSiteIds = useMemo(
     () =>
-      new Set(
-        searchParams
-          .getAll("site")
-          .map((value) => value.trim())
-          .filter((value) => value !== "" && /^\d+$/.test(value)),
+      Array.from(
+        new Set(
+          searchParams
+            .getAll("site")
+            .map((value) => value.trim())
+            .filter((value) => value !== "" && /^\d+$/.test(value)),
+        ),
       ),
     [searchParams],
   );
 
-  const visibleBuildings = useMemo(() => {
-    if (!buildings) return [];
-    if (urlSiteIds.size > 0) {
-      return buildings.filter((b) => urlSiteIds.has((b.building?.siteId ?? 0n).toString()));
+  // URL wins over picker. Both empty + false → server returns every
+  // building in the org (rendered straight through, no client filter).
+  const requestSiteFilter = useMemo(() => {
+    if (urlSiteIds.length > 0) {
+      return {
+        siteIds: urlSiteIds.map((id) => BigInt(id)),
+        includeUnassigned: false,
+      };
     }
-    if (activeSite.kind === "all") return buildings;
-    if (activeSite.kind === "unassigned") {
-      return buildings.filter((b) => !b.building?.siteId || b.building.siteId === 0n);
+    return siteFilterFromActive(activeSite);
+  }, [urlSiteIds, activeSite]);
+
+  // Latest scope, read at response time. usePoll has no per-request
+  // cancellation, so a slow ListBuildings for a previous scope can resolve
+  // after a newer one; comparing the captured scope against this ref lets
+  // the stale (out-of-order) response be ignored instead of clobbering the
+  // current scope's rows.
+  const requestSiteFilterRef = useRef(requestSiteFilter);
+  useEffect(() => {
+    requestSiteFilterRef.current = requestSiteFilter;
+  }, [requestSiteFilter]);
+
+  // Returning the promise lets usePoll schedule the next tick from response
+  // completion (not from request start) so slow responses can't overlap.
+  const fetchBuildings = useCallback(() => {
+    const requestedFilter = requestSiteFilter; // captured for the staleness check
+    return listBuildings({
+      siteIds: requestSiteFilter.siteIds,
+      includeUnassigned: requestSiteFilter.includeUnassigned,
+      onSuccess: (rows) => {
+        if (requestSiteFilterRef.current !== requestedFilter) return; // scope changed mid-flight
+        setBuildings(rows);
+        setBuildingsError(null);
+      },
+      onError: (msg) => {
+        if (requestSiteFilterRef.current !== requestedFilter) return; // scope changed mid-flight
+        setBuildingsError(msg);
+        // Preserve last-good list across transient errors; only fall to []
+        // on the initial-load failure path.
+        setBuildings((prev) => prev ?? []);
+      },
+    });
+  }, [listBuildings, requestSiteFilter]);
+
+  // Gate the poll on site:read — same gate FleetLayout uses to redirect.
+  const canReadBuildings = useHasPermission("site:read");
+  // usePoll keeps fetchData in a ref and doesn't re-run on its identity
+  // change, so a site-filter switch wouldn't refetch until the next poll
+  // tick. Feed the filter as `params` (a stable string key) so the poll
+  // effect restarts immediately when the active site changes.
+  const siteFilterKey = useMemo(
+    () => `${requestSiteFilter.siteIds.map(String).join(",")}|${requestSiteFilter.includeUnassigned}`,
+    [requestSiteFilter],
+  );
+  usePoll({
+    fetchData: fetchBuildings,
+    params: siteFilterKey,
+    poll: true,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    enabled: canReadBuildings,
+  });
+
+  // Drop the previous scope's rows the moment the site filter changes so
+  // the now-mismatched buildings can't render (or be selected/edited)
+  // under the new scope during the in-flight refetch. Resetting to
+  // `undefined` surfaces the Loading… state until the scoped response
+  // lands; usePoll's params change fires that fetch immediately.
+  const prevSiteFilterKey = useRef(siteFilterKey);
+  useEffect(() => {
+    if (prevSiteFilterKey.current !== siteFilterKey) {
+      prevSiteFilterKey.current = siteFilterKey;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale cross-scope rows; external-sync pattern.
+      setBuildings(undefined);
+      setSelectedBuildingIds([]);
     }
-    return buildings.filter((b) => (b.building?.siteId ?? 0n).toString() === activeSite.id);
-  }, [buildings, activeSite, urlSiteIds]);
+  }, [siteFilterKey]);
+
+  // Server-side filter already scoped the list to the active site /
+  // URL deep-link; just pass through.
+  const visibleBuildings = useMemo(() => buildings ?? [], [buildings]);
   const visibleBuildingScopes = useMemo(
     () =>
       visibleBuildings.flatMap((building) => {
@@ -237,8 +280,14 @@ const FleetBuildingsPage = () => {
       />
     ) : null;
 
+  // When a site filter is active, the response is scoped — so an empty
+  // response could mean "no buildings in this site" rather than "no
+  // buildings at all in the org". Differentiate so we don't show the
+  // first-time-user CTA inside a filtered scope.
+  const hasSiteFilter = requestSiteFilter.siteIds.length > 0 || requestSiteFilter.includeUnassigned;
+
   let pageContent: ReactNode;
-  if (buildings.length === 0) {
+  if (buildings.length === 0 && !hasSiteFilter) {
     pageContent = (
       <FilterRow testId="fleet-buildings-page">
         <div className="flex items-center justify-end">{addBuildingButton}</div>
