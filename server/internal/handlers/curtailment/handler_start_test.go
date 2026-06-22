@@ -44,7 +44,6 @@ func newStartStubStore() *startStubStore {
 			OrgID:                 1,
 			MaxDurationDefaultSec: 14400,
 			CandidateMinPowerW:    1500,
-			PostEventCooldownSec:  600,
 		},
 	}
 }
@@ -55,14 +54,6 @@ func (s *startStubStore) GetOrgConfig(_ context.Context, orgID int64) (*models.O
 	return &cfg, nil
 }
 
-func (s *startStubStore) UpdateOrgConfigPostEventCooldown(_ context.Context, orgID int64, cooldownSec int32) (*models.OrgConfig, error) {
-	cfg := *s.orgConfig
-	cfg.OrgID = orgID
-	cfg.PostEventCooldownSec = cooldownSec
-	s.orgConfig = &cfg
-	return &cfg, nil
-}
-
 func (s *startStubStore) ListActiveCurtailedDevices(_ context.Context, _ int64) ([]string, error) {
 	return nil, nil
 }
@@ -70,7 +61,10 @@ func (s *startStubStore) ListActiveCurtailmentTargetDevices(context.Context, int
 	panic("ListActiveCurtailmentTargetDevices not exercised by handler Start tests")
 }
 
-func (s *startStubStore) ListRecentlyResolvedCurtailedDevices(_ context.Context, _ int64, _ int32) ([]string, error) {
+func (s *startStubStore) ListRecentlyResolvedCurtailedDevices(
+	context.Context,
+	interfaces.ListRecentlyResolvedCurtailedDevicesParams,
+) ([]string, error) {
 	return nil, nil
 }
 
@@ -94,7 +88,13 @@ func (s *startStubStore) InsertEventWithTargets(
 		EventUUID: event.EventUUID,
 	}, nil
 }
-func (s *startStubStore) ClaimClosedLoopFullFleetTargets(context.Context, int64, []models.InsertTargetParams) ([]*models.Target, error) {
+func (s *startStubStore) ClaimClosedLoopFullFleetTargets(
+	context.Context,
+	int64,
+	int64,
+	int32,
+	[]models.InsertTargetParams,
+) ([]*models.Target, error) {
 	panic("ClaimClosedLoopFullFleetTargets not exercised by handler Start tests")
 }
 

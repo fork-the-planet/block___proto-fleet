@@ -44,6 +44,7 @@ type PreviewRequest struct {
 	IncludeMaintenance         bool
 	ForceIncludeMaintenance    bool
 	CandidateMinPowerWOverride *int32 // nil = use org default; admin-gated by handler
+	PostEventCooldownSec       int32
 }
 
 // StartRequest is the service-level shape of a Start call. Adds event-row
@@ -139,6 +140,7 @@ func (s *Service) Preview(ctx context.Context, req PreviewRequest) (*Plan, error
 	if err := validatePreviewRequest(req); err != nil {
 		return nil, err
 	}
+	req.PostEventCooldownSec = effectivePostEventCooldownSec(req)
 	plan, _, _, err := s.runSelector(ctx, req)
 	if err != nil {
 		return nil, err
@@ -153,6 +155,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Plan, error) {
 	if err := validateStartRequest(req); err != nil {
 		return nil, err
 	}
+	req.PostEventCooldownSec = effectivePostEventCooldownSec(req.PreviewRequest)
 
 	// Idempotent-replay lookup: a prior persisted match short-circuits
 	// before selection so duplicate webhook deliveries don't re-run the
@@ -954,12 +957,30 @@ func (s *Service) runSelector(ctx context.Context, req PreviewRequest) (*Plan, i
 		}
 	}
 
+	cooldownSet := map[string]struct{}{}
+	if req.PostEventCooldownSec > 0 {
+		cooldownDevices, err := s.store.ListRecentlyResolvedCurtailedDevices(
+			ctx,
+			interfaces.ListRecentlyResolvedCurtailedDevicesParams{
+				OrgID:             req.OrgID,
+				CooldownSec:       req.PostEventCooldownSec,
+				DeviceIdentifiers: candidateFilter.DeviceIdentifiers,
+				SiteID:            candidateFilter.SiteID,
+			},
+		)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		cooldownSet = toStringSet(cooldownDevices)
+	}
+
 	// TODO: registry-driven curtail_full capability check. classifyCandidates
 	// already skips devices missing driver metadata as defense-in-depth.
 
 	eligible, preFiltered, summary := classifyCandidates(candidates, classifyOpts{
 		IncludeMaintenance: req.IncludeMaintenance && req.ForceIncludeMaintenance,
 		ActiveEventDevices: activeSet,
+		CooldownDevices:    cooldownSet,
 		CandidateMinPowerW: minPowerW,
 	})
 
@@ -1177,6 +1198,9 @@ func validatePreviewRequest(req PreviewRequest) error {
 			*req.CandidateMinPowerWOverride,
 		)
 	}
+	if err := validatePostEventCooldownSec(req.PostEventCooldownSec); err != nil {
+		return err
+	}
 	// Maintenance override pair is both-or-neither (DB CHECK is the backstop).
 	if req.IncludeMaintenance != req.ForceIncludeMaintenance {
 		return fleeterror.NewInvalidArgumentError(
@@ -1184,6 +1208,13 @@ func validatePreviewRequest(req PreviewRequest) error {
 		)
 	}
 	return nil
+}
+
+func effectivePostEventCooldownSec(req PreviewRequest) int32 {
+	if req.Priority == models.PriorityEmergency {
+		return 0
+	}
+	return req.PostEventCooldownSec
 }
 
 func resolveScope(s Scope) (interfaces.ListCandidatesParams, error) {
@@ -1238,6 +1269,7 @@ func resolveScope(s Scope) (interfaces.ListCandidatesParams, error) {
 type classifyOpts struct {
 	IncludeMaintenance bool
 	ActiveEventDevices map[string]struct{}
+	CooldownDevices    map[string]struct{}
 	CandidateMinPowerW int32
 }
 
@@ -1309,6 +1341,11 @@ func classifyCandidates(cands []*models.Candidate, opts classifyOpts) ([]Candida
 		if !hasNonNegativeFiniteFloat(c.LatestPowerW) || !hasNonNegativeFiniteFloat(c.LatestHashRateHS) {
 			skipped = append(skipped, SkippedDevice{c.DeviceIdentifier, SkipStaleTelemetry})
 			summary.ExcludedStale++
+			continue
+		}
+		if _, cooled := opts.CooldownDevices[c.DeviceIdentifier]; cooled {
+			skipped = append(skipped, SkippedDevice{c.DeviceIdentifier, SkipCooldown})
+			summary.ExcludedCooldown++
 			continue
 		}
 		// Non-finite avg_efficiency breaks sort transitivity; rank last.
@@ -1401,7 +1438,7 @@ func buildInsertParams(req StartRequest, plan *Plan, minPowerW int32) (models.In
 			)
 		}
 	}
-	decisionJSON, err := marshalDecisionSnapshot(plan, minPowerW)
+	decisionJSON, err := marshalDecisionSnapshot(plan, minPowerW, req.PostEventCooldownSec)
 	if err != nil {
 		return models.InsertEventParams{}, nil, err
 	}
@@ -1725,7 +1762,7 @@ func cloneInt32Ptr(v *int32) *int32 {
 // marshalDecisionSnapshot captures the selector outputs for the
 // decision_snapshot column (rejection counters, realized vs. requested
 // kW, resolved candidate floor).
-func marshalDecisionSnapshot(plan *Plan, minPowerW int32) ([]byte, error) {
+func marshalDecisionSnapshot(plan *Plan, minPowerW int32, postEventCooldownSec int32) ([]byte, error) {
 	skipped := make([]map[string]string, len(plan.Skipped))
 	for i, s := range plan.Skipped {
 		skipped[i] = map[string]string{
@@ -1735,6 +1772,7 @@ func marshalDecisionSnapshot(plan *Plan, minPowerW int32) ([]byte, error) {
 	}
 	snapshot := map[string]any{
 		"candidate_min_power_w":        minPowerW,
+		"post_event_cooldown_sec":      postEventCooldownSec,
 		"estimated_reduction_kw":       plan.EstimatedReductionKW,
 		"estimated_remaining_power_kw": plan.EstimatedRemainingPowerKW,
 		"selected_count":               len(plan.Selected),

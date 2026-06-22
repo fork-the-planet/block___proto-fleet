@@ -176,18 +176,39 @@ FROM jsonb_to_recordset($2::JSONB) AS t(
     baseline_power_w          NUMERIC(12,3),
     selector_rationale_jsonb  JSONB
 )
+WHERE $3::INT <= 0
+    OR NOT EXISTS (
+        SELECT 1
+        FROM curtailment_target cooldown_target
+        JOIN curtailment_event cooldown_event
+            ON cooldown_event.id = cooldown_target.curtailment_event_id
+        WHERE cooldown_event.org_id = $4
+            AND cooldown_target.device_identifier = t.device_identifier
+            AND cooldown_target.state IN ('resolved', 'restore_failed')
+            AND (
+                cooldown_event.state IN ('pending', 'active', 'restoring')
+                OR cooldown_event.ended_at >= CURRENT_TIMESTAMP - ($3::INT * INTERVAL '1 second')
+            )
+    )
 `
 
 type BulkInsertCurtailmentTargetsParams struct {
 	CurtailmentEventID int64
 	TargetsJsonb       json.RawMessage
+	CooldownSec        int32
+	OrgID              int64
 }
 
 // Bulk fan-out via jsonb_to_recordset: per-row fields ride in a JSONB
 // payload, missing/null keys map to SQL NULL. :execrows lets the caller
 // pin (rows == len(input)) to detect partial writes.
 func (q *Queries) BulkInsertCurtailmentTargets(ctx context.Context, arg BulkInsertCurtailmentTargetsParams) (int64, error) {
-	result, err := q.exec(ctx, q.bulkInsertCurtailmentTargetsStmt, bulkInsertCurtailmentTargets, arg.CurtailmentEventID, arg.TargetsJsonb)
+	result, err := q.exec(ctx, q.bulkInsertCurtailmentTargetsStmt, bulkInsertCurtailmentTargets,
+		arg.CurtailmentEventID,
+		arg.TargetsJsonb,
+		arg.CooldownSec,
+		arg.OrgID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -234,12 +255,15 @@ func (q *Queries) BumpCurtailmentTargetRetry(ctx context.Context, arg BumpCurtai
 
 const claimClosedLoopFullFleetTargets = `-- name: ClaimClosedLoopFullFleetTargets :many
 WITH locked_event AS MATERIALIZED (
-    SELECT id
+    SELECT
+        curtailment_event.id,
+        curtailment_event.org_id,
+        curtailment_event.decision_snapshot_jsonb
     FROM curtailment_event
-    WHERE id = $2
-      AND state IN ('pending', 'active')
-      AND mode = 'FULL_FLEET'
-      AND loop_type = 'closed'
+    WHERE curtailment_event.id = $2
+      AND curtailment_event.state IN ('pending', 'active')
+      AND curtailment_event.mode = 'FULL_FLEET'
+      AND curtailment_event.loop_type = 'closed'
     FOR UPDATE
 )
 INSERT INTO curtailment_target (
@@ -273,6 +297,22 @@ WHERE NOT EXISTS (
     FROM curtailment_target existing
     WHERE existing.curtailment_event_id = locked_event.id
       AND existing.device_identifier = t.device_identifier
+)
+AND NOT EXISTS (
+    SELECT 1
+    FROM curtailment_target cooldown_target
+    JOIN curtailment_event cooldown_event
+        ON cooldown_event.id = cooldown_target.curtailment_event_id
+    WHERE cooldown_event.org_id = locked_event.org_id
+      AND cooldown_target.device_identifier = t.device_identifier
+      AND cooldown_target.state IN ('resolved', 'restore_failed')
+      AND COALESCE((locked_event.decision_snapshot_jsonb->>'post_event_cooldown_sec')::INT, 0) > 0
+      AND (
+        cooldown_event.state IN ('pending', 'active', 'restoring')
+        OR cooldown_event.ended_at >= CURRENT_TIMESTAMP - (
+            COALESCE((locked_event.decision_snapshot_jsonb->>'post_event_cooldown_sec')::INT, 0) * INTERVAL '1 second'
+        )
+      )
 )
 ON CONFLICT DO NOTHING
 RETURNING curtailment_target.curtailment_event_id, curtailment_target.device_identifier, curtailment_target.target_type, curtailment_target.state, curtailment_target.desired_state, curtailment_target.baseline_power_w, curtailment_target.added_at, curtailment_target.released_at, curtailment_target.last_dispatched_at, curtailment_target.last_batch_uuid, curtailment_target.observed_power_w, curtailment_target.observed_at, curtailment_target.confirmed_at, curtailment_target.retry_count, curtailment_target.last_error, curtailment_target.selector_rationale_jsonb, curtailment_target.curtail_state, curtailment_target.curtail_dispatched_at, curtailment_target.curtail_batch_uuid, curtailment_target.curtail_completed_at, curtailment_target.curtail_retry_count, curtailment_target.curtail_failure_count, curtailment_target.curtail_last_error, curtailment_target.restore_state, curtailment_target.restore_started_at, curtailment_target.restore_dispatched_at, curtailment_target.restore_batch_uuid, curtailment_target.restore_completed_at, curtailment_target.restore_retry_count, curtailment_target.restore_failure_count, curtailment_target.restore_last_error
@@ -430,7 +470,6 @@ ins AS (
         org_id,
         max_duration_default_sec,
         candidate_min_power_w,
-        post_event_cooldown_sec,
         created_at,
         updated_at
 )
@@ -438,7 +477,6 @@ SELECT
     org_id,
     max_duration_default_sec,
     candidate_min_power_w,
-    post_event_cooldown_sec,
     created_at,
     updated_at
 FROM ins
@@ -447,7 +485,6 @@ SELECT
     c.org_id,
     c.max_duration_default_sec,
     c.candidate_min_power_w,
-    c.post_event_cooldown_sec,
     c.created_at,
     c.updated_at
 FROM curtailment_org_config c
@@ -460,7 +497,6 @@ type EnsureCurtailmentOrgConfigRow struct {
 	OrgID                 int64
 	MaxDurationDefaultSec int32
 	CandidateMinPowerW    int32
-	PostEventCooldownSec  int32
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
@@ -474,7 +510,6 @@ func (q *Queries) EnsureCurtailmentOrgConfig(ctx context.Context, orgID int64) (
 		&i.OrgID,
 		&i.MaxDurationDefaultSec,
 		&i.CandidateMinPowerW,
-		&i.PostEventCooldownSec,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -794,7 +829,6 @@ SELECT
     org_id,
     max_duration_default_sec,
     candidate_min_power_w,
-    post_event_cooldown_sec,
     created_at,
     updated_at
 FROM curtailment_org_config
@@ -810,7 +844,6 @@ func (q *Queries) GetCurtailmentOrgConfig(ctx context.Context, orgID int64) (Cur
 		&i.OrgID,
 		&i.MaxDurationDefaultSec,
 		&i.CandidateMinPowerW,
-		&i.PostEventCooldownSec,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1853,6 +1886,68 @@ func (q *Queries) ListRecentlyResolvedCurtailedDevicesByOrg(ctx context.Context,
 	return items, nil
 }
 
+const listRecentlyResolvedCurtailedDevicesByScope = `-- name: ListRecentlyResolvedCurtailedDevicesByScope :many
+WITH scoped_devices AS MATERIALIZED (
+    SELECT unnest($3::text[]) AS device_identifier
+    WHERE $3::text[] IS NOT NULL
+    UNION
+    SELECT d.device_identifier
+    FROM device d
+    WHERE d.org_id = $1
+        AND d.deleted_at IS NULL
+        AND $3::text[] IS NULL
+        AND $4::BIGINT IS NOT NULL
+        AND d.site_id = $4::BIGINT
+)
+SELECT DISTINCT ct.device_identifier
+FROM scoped_devices sd
+JOIN curtailment_target ct ON ct.device_identifier = sd.device_identifier
+JOIN curtailment_event ce ON ce.id = ct.curtailment_event_id
+WHERE ce.org_id = $1
+    AND ct.state IN ('resolved', 'restore_failed')
+    AND (
+        ce.state IN ('pending', 'active', 'restoring')
+        OR ce.ended_at >= CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 second')
+    )
+`
+
+type ListRecentlyResolvedCurtailedDevicesByScopeParams struct {
+	OrgID             int64
+	CooldownSec       int32
+	DeviceIdentifiers []string
+	SiteID            sql.NullInt64
+}
+
+// Scoped cooldown lookup: enumerate the request's live candidate devices first,
+// then probe terminal target history by device identifier.
+func (q *Queries) ListRecentlyResolvedCurtailedDevicesByScope(ctx context.Context, arg ListRecentlyResolvedCurtailedDevicesByScopeParams) ([]string, error) {
+	rows, err := q.query(ctx, q.listRecentlyResolvedCurtailedDevicesByScopeStmt, listRecentlyResolvedCurtailedDevicesByScope,
+		arg.OrgID,
+		arg.CooldownSec,
+		pq.Array(arg.DeviceIdentifiers),
+		arg.SiteID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var device_identifier string
+		if err := rows.Scan(&device_identifier); err != nil {
+			return nil, err
+		}
+		items = append(items, device_identifier)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCurtailmentScopeForWrite = `-- name: LockCurtailmentScopeForWrite :exec
 SELECT pg_advisory_xact_lock(hashtextextended('curtailment_scope:' || $1::text, 0))
 `
@@ -2169,38 +2264,6 @@ func (q *Queries) UpdateCurtailmentEventState(ctx context.Context, arg UpdateCur
 		return 0, err
 	}
 	return result.RowsAffected()
-}
-
-const updateCurtailmentOrgConfigPostEventCooldown = `-- name: UpdateCurtailmentOrgConfigPostEventCooldown :one
-UPDATE curtailment_org_config
-SET post_event_cooldown_sec = $1
-WHERE org_id = $2
-RETURNING
-    org_id,
-    max_duration_default_sec,
-    candidate_min_power_w,
-    post_event_cooldown_sec,
-    created_at,
-    updated_at
-`
-
-type UpdateCurtailmentOrgConfigPostEventCooldownParams struct {
-	PostEventCooldownSec int32
-	OrgID                int64
-}
-
-func (q *Queries) UpdateCurtailmentOrgConfigPostEventCooldown(ctx context.Context, arg UpdateCurtailmentOrgConfigPostEventCooldownParams) (CurtailmentOrgConfig, error) {
-	row := q.queryRow(ctx, q.updateCurtailmentOrgConfigPostEventCooldownStmt, updateCurtailmentOrgConfigPostEventCooldown, arg.PostEventCooldownSec, arg.OrgID)
-	var i CurtailmentOrgConfig
-	err := row.Scan(
-		&i.OrgID,
-		&i.MaxDurationDefaultSec,
-		&i.CandidateMinPowerW,
-		&i.PostEventCooldownSec,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const updateCurtailmentTargetState = `-- name: UpdateCurtailmentTargetState :execrows
