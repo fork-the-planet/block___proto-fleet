@@ -72,11 +72,12 @@ const SiteDetailPage = () => {
   // UpdateSite + CreateBuilding require site:manage server-side.
   const canManageSites = useHasPermission("site:manage");
 
-  const modals = useSiteModals({ refetchSites: fetchSites });
   const [buildingsRefreshKey, setBuildingsRefreshKey] = useState(0);
-  const buildingModals = useBuildingModals({
-    refetchBuildings: () => setBuildingsRefreshKey((n) => n + 1),
-  });
+  const refetchBuildings = useCallback(() => setBuildingsRefreshKey((n) => n + 1), []);
+  // Membership saves in ManageSiteModal also affect building rows, so share
+  // the same refresh signal used for direct building mutations.
+  const modals = useSiteModals({ refetchSites: fetchSites, refetchBuildings });
+  const buildingModals = useBuildingModals({ refetchBuildings });
 
   if (sites === undefined) {
     return (
@@ -166,13 +167,7 @@ const SiteDetailPage = () => {
           <PlaceholderBlock label="Buildings grid — coming soon" className="h-40" />
         </div>
       </div>
-      <SiteModals
-        modals={modals}
-        sites={sites}
-        onAddBuilding={(siteId, siteName) => buildingModals.openDetailsCreate(siteId, siteName)}
-        onEditBuilding={(row, siteName) => buildingModals.openDetailsEdit(row, siteName)}
-        buildingsRefreshKey={buildingsRefreshKey}
-      />
+      <SiteModals modals={modals} sites={sites} buildingsRefreshKey={buildingsRefreshKey} />
       <BuildingModals modals={buildingModals} sites={sites} />
     </>
   );
