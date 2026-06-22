@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { create } from "@bufbuild/protobuf";
 import { POLL_INTERVAL_MS } from "./constants";
+import { useBuildings } from "@/protoFleet/api/buildings";
 import {
   type SortConfig,
   SortConfigSchema,
@@ -38,6 +39,7 @@ import { hasReachedExpectedStatus } from "@/protoFleet/features/fleetManagement/
 import { parseFilterFromURL } from "@/protoFleet/features/fleetManagement/utils/filterUrlParams";
 import { FLEET_VISIBLE_PAIRING_STATUSES } from "@/protoFleet/features/fleetManagement/utils/fleetVisiblePairingFilter";
 import { encodeSortToURL, parseSortFromURL } from "@/protoFleet/features/fleetManagement/utils/sortUrlParams";
+import type { FilterLabelSource } from "@/protoFleet/features/fleetManagement/views/viewSummary";
 import Miners from "@/protoFleet/features/onboarding/components/Miners";
 import { isPathScopable } from "@/protoFleet/routing/siteScope";
 import ErrorBoundary from "@/shared/components/ErrorBoundary";
@@ -83,14 +85,27 @@ const applySiteScopeToMinerFilter = (
 const Fleet = () => {
   const navigate = useNavigate();
   const { listGroups, listRacks } = useDeviceSets();
+  const { listAllBuildings } = useBuildings();
   const [availableGroups, setAvailableGroups] = useState<DeviceSet[]>([]);
   const [availableRacks, setAvailableRacks] = useState<DeviceSet[]>([]);
-  const { sites, sitesLoaded } = useFleetOutletContext();
+  const {
+    sites,
+    sitesLoaded,
+    siteCatalogAccessGranted,
+    notifyPairingCompleted,
+    minersChangedAt,
+    publishViewFilterContext,
+  } = useFleetOutletContext();
   const knownSiteIds = useMemo(() => (sitesLoaded ? buildKnownSiteIds(sites) : undefined), [sites, sitesLoaded]);
   const { activeSite } = useActiveSite({ knownSiteIds });
   const { siteIds: activeSiteIds, includeUnassigned: activeIncludeUnassigned } = useMemo(
     () => siteFilterFromActive(activeSite),
     [activeSite],
+  );
+  const [availableBuildings, setAvailableBuildings] = useState<FilterLabelSource[]>([]);
+  const readableAvailableBuildings = useMemo(
+    () => (siteCatalogAccessGranted ? availableBuildings : []),
+    [availableBuildings, siteCatalogAccessGranted],
   );
 
   useEffect(() => {
@@ -105,6 +120,20 @@ const Fleet = () => {
       },
     });
   }, [listGroups, listRacks]);
+
+  useEffect(() => {
+    if (!siteCatalogAccessGranted) return;
+
+    listAllBuildings({
+      onSuccess: (buildings) => {
+        setAvailableBuildings(
+          buildings
+            .filter((row) => row.building !== undefined)
+            .map((row) => ({ id: row.building!.id.toString(), label: row.building!.name })),
+        );
+      },
+    });
+  }, [listAllBuildings, siteCatalogAccessGranted]);
 
   const { pathname } = useLocation();
   const insideFleetShell = isPathScopable(pathname);
@@ -259,14 +288,25 @@ const Fleet = () => {
   // Chrome-level coordination: CompleteSetup lives in FleetLayout and pulses
   // these timestamps. We forward our pairing completion up, and refetch when
   // an in-banner flow (e.g. pool assignment) signals the miner list is stale.
-  const { notifyPairingCompleted, minersChangedAt, publishViewFilterContext } = useFleetOutletContext();
+  const availableSites = useMemo<FilterLabelSource[]>(
+    () =>
+      (sites ?? [])
+        .filter((row) => row.site !== undefined)
+        .map((row) => ({ id: row.site!.id.toString(), label: row.site!.name })),
+    [sites],
+  );
 
   // Push our DeviceSet metadata up to FleetLayout so the saved-view modal
   // (mounted in the top tab strip) can show human-readable labels for any
   // group/rack ids referenced by an active filter.
   useEffect(() => {
-    publishViewFilterContext({ availableGroups, availableRacks });
-  }, [publishViewFilterContext, availableGroups, availableRacks]);
+    publishViewFilterContext({
+      availableGroups,
+      availableRacks,
+      availableBuildings: readableAvailableBuildings,
+      availableSites,
+    });
+  }, [publishViewFilterContext, availableGroups, availableRacks, readableAvailableBuildings, availableSites]);
 
   const refetchAll = useCallback(() => {
     refetch();
@@ -346,6 +386,8 @@ const Fleet = () => {
           availableFirmwareVersions={availableFirmwareVersions}
           availableGroups={availableGroups}
           availableRacks={availableRacks}
+          availableSites={availableSites}
+          availableBuildings={readableAvailableBuildings}
           currentFilter={currentFilter}
           currentSortConfig={currentSortConfig}
           onExportCsv={siteScopeMatchesNoRows ? () => undefined : exportCsv}
