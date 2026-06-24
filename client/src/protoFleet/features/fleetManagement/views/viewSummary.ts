@@ -246,6 +246,8 @@ export const summarizeFilters = (
       return summarizeBuildingFilters(params, context);
     case "sites":
       return summarizeSiteFilters(params);
+    case "infrastructure":
+      return [];
   }
 };
 

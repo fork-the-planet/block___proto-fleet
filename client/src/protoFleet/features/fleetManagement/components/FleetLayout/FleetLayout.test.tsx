@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { Code } from "@connectrpc/connect";
 
+// Keep Infrastructure hidden in the tab strip under test while preserving
+// direct-link reachability for authorized QA/dogfood paths.
+vi.mock("@/protoFleet/constants/featureFlags", () => ({
+  INFRASTRUCTURE_DEVICES_ENABLED: false,
+}));
+
 import FleetLayout from "./FleetLayout";
 import { SiteSchema, type SiteWithCounts, SiteWithCountsSchema } from "@/protoFleet/api/generated/sites/v1/sites_pb";
 import { type ActiveSite } from "@/protoFleet/store/types/activeSite";
@@ -78,6 +84,7 @@ const renderAt = (initialPath: string) =>
           <Route path="buildings" element={<div data-testid="tab-content-buildings">buildings</div>} />
           <Route path="racks" element={<div data-testid="tab-content-racks">racks</div>} />
           <Route path="miners" element={<div data-testid="tab-content-miners">miners</div>} />
+          <Route path="infrastructure" element={<div data-testid="tab-content-infrastructure">infrastructure</div>} />
         </Route>
       </Routes>
       <LocationProbe />
@@ -153,6 +160,19 @@ describe("FleetLayout redirect logic", () => {
     expect(screen.getByTestId("location-probe").textContent).toBe("/fleet/racks");
   });
 
+  test("hides Infrastructure tab while the infrastructure devices flag is off", async () => {
+    renderAt("/fleet/racks");
+    await waitFor(() => expect(screen.getByTestId("tab-content-racks")).toBeInTheDocument());
+    expect(screen.queryByTestId("fleet-tab-infrastructure")).not.toBeInTheDocument();
+  });
+
+  test("keeps Infrastructure deep links reachable while the infrastructure devices flag is off", async () => {
+    renderAt("/fleet/infrastructure");
+    await waitFor(() => expect(screen.getByTestId("tab-content-infrastructure")).toBeInTheDocument());
+    expect(screen.getByTestId("location-probe").textContent).toBe("/fleet/infrastructure");
+    expect(screen.queryByTestId("fleet-tab-infrastructure")).not.toBeInTheDocument();
+  });
+
   test("redirects hidden tab deep links without mounting their content", async () => {
     hasPermissionMock.current = (key: string) => key !== "rack:read";
 
@@ -187,6 +207,20 @@ describe("FleetLayout scoped-permission fallback", () => {
     await waitFor(() => expect(screen.getByTestId("location-probe").textContent).toBe("/fleet/racks"));
   });
 
+  test("does not mount Infrastructure when site access is denied at runtime", async () => {
+    hasPermissionMock.current = (key: string) => key === "site:read";
+    listSitesMock.mockImplementation(async ({ onError }) => {
+      onError?.("access denied", Code.PermissionDenied);
+    });
+
+    renderAt("/fleet/infrastructure");
+
+    await waitFor(() => {
+      expect(screen.getByText("You do not have permission to view Fleet sections.")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("tab-content-infrastructure")).not.toBeInTheDocument();
+  });
+
   test("keeps stored lastTab=racks when site access is blocked", async () => {
     localStorage.setItem("fleet:lastActiveTab", JSON.stringify("racks"));
     hasPermissionMock.current = (key: string) => key !== "site:read";
@@ -204,6 +238,53 @@ describe("FleetLayout scoped-permission fallback", () => {
     expect(screen.getByTestId("location-probe").textContent).toBe("/fleet");
     expect(screen.queryByTestId("tab-content-miners")).not.toBeInTheDocument();
     expect(screen.queryByTestId("tab-content-racks")).not.toBeInTheDocument();
+  });
+
+  test("shows permission denied on bare Fleet when only fleet read is held", async () => {
+    hasPermissionMock.current = (key: string) => key === "fleet:read";
+
+    renderAt("/fleet");
+
+    await waitFor(() => {
+      expect(screen.getByText("You do not have permission to view Fleet sections.")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("location-probe").textContent).toBe("/fleet");
+    expect(screen.queryByTestId("fleet-tab-infrastructure")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tab-content-infrastructure")).not.toBeInTheDocument();
+  });
+
+  test("shows permission denied on denied Fleet tabs when only fleet read is held", async () => {
+    hasPermissionMock.current = (key: string) => key === "fleet:read";
+
+    renderAt("/fleet/racks");
+
+    await waitFor(() => {
+      expect(screen.getByText("You do not have permission to view Fleet sections.")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("location-probe").textContent).toBe("/fleet/racks");
+    expect(screen.queryByTestId("fleet-tab-infrastructure")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tab-content-racks")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tab-content-infrastructure")).not.toBeInTheDocument();
+  });
+
+  test("does not mount Infrastructure deep links without site read", async () => {
+    hasPermissionMock.current = (key: string) => key === "fleet:read";
+
+    renderAt("/fleet/infrastructure");
+
+    await waitFor(() => {
+      expect(screen.getByText("You do not have permission to view Fleet sections.")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("tab-content-infrastructure")).not.toBeInTheDocument();
+  });
+
+  test("mounts Infrastructure deep links for site-read roles", async () => {
+    hasPermissionMock.current = (key: string) => key === "site:read";
+
+    renderAt("/fleet/infrastructure");
+
+    await waitFor(() => expect(screen.getByTestId("tab-content-infrastructure")).toBeInTheDocument());
+    expect(screen.getByTestId("location-probe").textContent).toBe("/fleet/infrastructure");
   });
 
   test("mounts Racks for rack-only roles without site metadata access", async () => {

@@ -13,7 +13,7 @@ export const VIEWS_SCHEMA_VERSION = 2;
 export const VIEW_URL_PARAM = "view";
 
 /** Top-level Fleet tabs that can own a saved view. */
-export const FLEET_TAB_IDS = ["sites", "buildings", "racks", "miners"] as const;
+export const FLEET_TAB_IDS = ["sites", "buildings", "racks", "miners", "infrastructure"] as const;
 export type FleetTabId = (typeof FLEET_TAB_IDS)[number];
 
 const isFleetTabId = (value: unknown): value is FleetTabId =>
@@ -46,6 +46,7 @@ const TELEMETRY_FILTER_KEYS: readonly string[] = Object.keys(TELEMETRY_FILTER_BO
 const RACK_FILTER_KEYS: readonly string[] = ["building", "site", "zone", "issues", "display", ...TELEMETRY_FILTER_KEYS];
 const BUILDING_FILTER_KEYS: readonly string[] = ["site", "issues", ...TELEMETRY_FILTER_KEYS];
 const SITE_FILTER_KEYS: readonly string[] = ["issues", ...TELEMETRY_FILTER_KEYS];
+const INFRASTRUCTURE_FILTER_KEYS: readonly string[] = [];
 
 const SORT_KEYS: readonly string[] = ["sort", "dir"];
 
@@ -60,6 +61,7 @@ const FILTER_AND_SORT_KEYS_BY_TAB: Record<FleetTabId, ReadonlySet<string>> = {
   racks: new Set([...RACK_FILTER_KEYS, ...SORT_KEYS]),
   buildings: new Set(BUILDING_FILTER_KEYS),
   sites: new Set(SITE_FILTER_KEYS),
+  infrastructure: new Set(INFRASTRUCTURE_FILTER_KEYS),
 };
 
 /** Tabs that expose a save-worthy filter/sort surface. Used to gate "+ New view". */

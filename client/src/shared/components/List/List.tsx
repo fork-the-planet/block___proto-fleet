@@ -178,6 +178,7 @@ type ListProps<ListItem, ItemKeyValueType, ColKey extends string = keyof ListIte
   paddingLeft?: Partial<Record<Breakpoint, string>>;
   paddingRight?: Partial<Record<Breakpoint, string>>;
   overflowContainer?: boolean;
+  stickyChromePaddingLeft?: Partial<Record<Breakpoint, string>>;
   /**
    * Extra classes for the sticky-left chrome (filter row, count, action bar).
    * Used in page-scroll mode to give them an explicit viewport width so they
@@ -721,6 +722,7 @@ const List = <ListItem, ItemKeyValueType, ColKey extends string = keyof ListItem
   paddingLeft,
   paddingRight,
   overflowContainer = true,
+  stickyChromePaddingLeft,
   stickyChromeClassName,
   stickyBgColor = "bg-surface-base",
   total,
@@ -1102,8 +1104,30 @@ const List = <ListItem, ItemKeyValueType, ColKey extends string = keyof ListItem
     return style;
   }, [paddingLeft, paddingRight, stickyBgColor]);
 
+  const resolvedStickyChromePaddingLeft = stickyChromePaddingLeft ?? paddingLeft;
+  const stickyChromePaddingCssVariables = useMemo(() => {
+    const style: Record<string, string> = {};
+    Object.entries(breakpoints).forEach(([, breakpoint]) => {
+      style[`--list-padding-${breakpoint}`] = resolvedStickyChromePaddingLeft?.[breakpoint] || "0px";
+      style[`--list-padding-right-${breakpoint}`] = paddingRight?.[breakpoint] || "0px";
+    });
+    style["--list-sticky-shadow-mask-bg"] = stickyShadowMaskColors[stickyBgColor] ?? "var(--color-surface-base)";
+    return style;
+  }, [resolvedStickyChromePaddingLeft, paddingRight, stickyBgColor]);
+
   const paddingClasses = clsx(
     paddingLeft
+      ? [
+          "phone:pl-(--list-padding-phone)",
+          "tablet:pl-(--list-padding-tablet)",
+          "laptop:pl-(--list-padding-laptop)",
+          "desktop:pl-(--list-padding-desktop)",
+        ]
+      : "",
+  );
+
+  const stickyChromePaddingClasses = clsx(
+    resolvedStickyChromePaddingLeft
       ? [
           "phone:pl-(--list-padding-phone)",
           "tablet:pl-(--list-padding-tablet)",
@@ -1194,7 +1218,7 @@ const List = <ListItem, ItemKeyValueType, ColKey extends string = keyof ListItem
   const filtersElement =
     filters?.length || headerControls ? (
       <Filters<ListItem>
-        className={clsx("gap-4", filtersClassName ?? "py-6", paddingClasses)}
+        className={clsx("gap-4", filtersClassName ?? "py-6", stickyChromePaddingClasses)}
         filterItems={filters ?? []}
         filterSize={filterSize}
         items={items}
@@ -1423,13 +1447,15 @@ const List = <ListItem, ItemKeyValueType, ColKey extends string = keyof ListItem
 
   return (
     <>
-      <div style={paddingCssVariables} className={clsx("sticky left-0 z-3", stickyChromeClassName)}>
+      <div style={stickyChromePaddingCssVariables} className={clsx("sticky left-0 z-3", stickyChromeClassName)}>
         {filtersElement}
       </div>
       <div style={paddingCssVariables}>
         {!hideTotal && total !== undefined ? (
-          <div className={clsx("sticky left-0 flex", stickyChromeClassName)}>
-            <div className={clsx("sticky left-0 pb-4 text-emphasis-300 text-text-primary-70", paddingClasses)}>
+          <div style={stickyChromePaddingCssVariables} className={clsx("sticky left-0 flex", stickyChromeClassName)}>
+            <div
+              className={clsx("sticky left-0 pb-4 text-emphasis-300 text-text-primary-70", stickyChromePaddingClasses)}
+            >
               {formatListCountLabel(total, {
                 unfilteredTotal: totalUnfiltered,
                 hasActiveFilters,
