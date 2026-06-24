@@ -1,13 +1,22 @@
 // Package models holds the domain types for sites.
 package models
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrSiteSlugCollision is returned by stores when the generated slug
+// lost a race against another live site in the same org. The service
+// handles it by generating the next suffix candidate and retrying.
+var ErrSiteSlugCollision = errors.New("site slug collision")
 
 // Site is the canonical domain shape for a site row.
 type Site struct {
 	ID              int64
 	OrgID           int64
 	Name            string
+	Slug            string
 	LocationCity    string
 	LocationState   string
 	Timezone        string
@@ -36,6 +45,7 @@ type SiteWithCounts struct {
 type CreateSiteParams struct {
 	OrgID           int64
 	Name            string
+	Slug            string
 	LocationCity    string
 	LocationState   string
 	Timezone        string
@@ -49,9 +59,13 @@ type CreateSiteParams struct {
 
 // UpdateSiteParams is the input shape for the Update flow.
 type UpdateSiteParams struct {
-	OrgID           int64
-	ID              int64
-	Name            string
+	OrgID int64
+	ID    int64
+	Name  string
+	// Slug is populated by the service layer (regenerated from Name on a
+	// rename, carried through unchanged otherwise); it is never taken from
+	// the API request.
+	Slug            string
 	LocationCity    string
 	LocationState   string
 	Timezone        string

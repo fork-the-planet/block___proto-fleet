@@ -21,7 +21,7 @@ import type { Message } from "@bufbuild/protobuf";
 export const file_sites_v1_sites: GenFile =
   /*@__PURE__*/
   fileDesc(
-    "ChRzaXRlcy92MS9zaXRlcy5wcm90bxIIc2l0ZXMudjEijwMKBFNpdGUSCgoCaWQYASABKAMSDAoEbmFtZRgCIAEoCRIVCg1sb2NhdGlvbl9jaXR5GAQgASgJEhYKDmxvY2F0aW9uX3N0YXRlGAUgASgJEhAKCHRpbWV6b25lGAYgASgJEhkKEXBvd2VyX2NhcGFjaXR5X213GAcgASgBEhYKDm5ldHdvcmtfY29uZmlnGAggASgJEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnVwZGF0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2FkZHJlc3MYCyABKAkSEwoLcG9zdGFsX2NvZGUYDSABKAkSDwoHY291bnRyeRgOIAEoCRINCgVub3RlcxgPIAEoCRIrCglwbGFjZW1lbnQYECABKAsyGC5jb21tb24udjEuUGxhY2VtZW50UmVmc0oECAMQBEoECAwQDVILZGVzY3JpcHRpb25SDWFkZHJlc3NfbGluZTIinwEKDlNpdGVXaXRoQ291bnRzEhwKBHNpdGUYASABKAsyDi5zaXRlcy52MS5TaXRlEhQKDGRldmljZV9jb3VudBgCIAEoAxIWCg5idWlsZGluZ19jb3VudBgDIAEoAxISCgpyYWNrX2NvdW50GAQgASgDEi0KCmxpc3Rfc3RhdHMYBSABKAsyGS5jb21tb24udjEuRmxlZXRMaXN0U3RhdHMijwEKEExpc3RTaXRlc1JlcXVlc3QSNwoVZXJyb3JfY29tcG9uZW50X3R5cGVzGAEgAygOMhguZXJyb3JzLnYxLkNvbXBvbmVudFR5cGUSQgoQdGVsZW1ldHJ5X3JhbmdlcxgCIAMoCzIoLmNvbW1vbi52MS5GbGVldExpc3RUZWxlbWV0cnlSYW5nZUZpbHRlciI8ChFMaXN0U2l0ZXNSZXNwb25zZRInCgVzaXRlcxgBIAMoCzIYLnNpdGVzLnYxLlNpdGVXaXRoQ291bnRzIu0CChFDcmVhdGVTaXRlUmVxdWVzdBIYCgRuYW1lGAEgASgJQgq6SAdyBRABGP8BEh8KDWxvY2F0aW9uX2NpdHkYAyABKAlCCLpIBXIDGP8BEiAKDmxvY2F0aW9uX3N0YXRlGAQgASgJQgi6SAVyAxj/ARIZCgh0aW1lem9uZRgFIAEoCUIHukgEcgIYQBIpChFwb3dlcl9jYXBhY2l0eV9tdxgGIAEoAUIOukgLEgkpAAAAAAAAAAASIQoObmV0d29ya19jb25maWcYByABKAlCCbpIBnIEKICAARIZCgdhZGRyZXNzGAggASgJQgi6SAVyAxj/ARIcCgtwb3N0YWxfY29kZRgKIAEoCUIHukgEcgIYIBIYCgdjb3VudHJ5GAsgASgJQge6SARyAhgCEhcKBW5vdGVzGAwgASgJQgi6SAVyAxiAIEoECAIQA0oECAkQClILZGVzY3JpcHRpb25SDWFkZHJlc3NfbGluZTIiUwoSQ3JlYXRlU2l0ZVJlc3BvbnNlEhwKBHNpdGUYASABKAsyDi5zaXRlcy52MS5TaXRlEh8KF25ldHdvcmtfY29uZmlnX3dhcm5pbmdzGAIgAygJIoIDChFVcGRhdGVTaXRlUmVxdWVzdBITCgJpZBgBIAEoA0IHukgEIgIgABIYCgRuYW1lGAIgASgJQgq6SAdyBRABGP8BEh8KDWxvY2F0aW9uX2NpdHkYBCABKAlCCLpIBXIDGP8BEiAKDmxvY2F0aW9uX3N0YXRlGAUgASgJQgi6SAVyAxj/ARIZCgh0aW1lem9uZRgGIAEoCUIHukgEcgIYQBIpChFwb3dlcl9jYXBhY2l0eV9tdxgHIAEoAUIOukgLEgkpAAAAAAAAAAASIQoObmV0d29ya19jb25maWcYCCABKAlCCbpIBnIEKICAARIZCgdhZGRyZXNzGAkgASgJQgi6SAVyAxj/ARIcCgtwb3N0YWxfY29kZRgLIAEoCUIHukgEcgIYIBIYCgdjb3VudHJ5GAwgASgJQge6SARyAhgCEhcKBW5vdGVzGA0gASgJQgi6SAVyAxiAIEoECAMQBEoECAoQC1ILZGVzY3JpcHRpb25SDWFkZHJlc3NfbGluZTIiUwoSVXBkYXRlU2l0ZVJlc3BvbnNlEhwKBHNpdGUYASABKAsyDi5zaXRlcy52MS5TaXRlEh8KF25ldHdvcmtfY29uZmlnX3dhcm5pbmdzGAIgAygJIigKEURlbGV0ZVNpdGVSZXF1ZXN0EhMKAmlkGAEgASgDQge6SAQiAiAAInQKEkRlbGV0ZVNpdGVSZXNwb25zZRIfChd1bmFzc2lnbmVkX2RldmljZV9jb3VudBgBIAEoAxIeChZkZWxldGVkX2J1aWxkaW5nX2NvdW50GAIgASgDEh0KFXVuYXNzaWduZWRfcmFja19jb3VudBgDIAEoAyLpAQoaQXNzaWduRGV2aWNlc1RvU2l0ZVJlcXVlc3QSJAoOdGFyZ2V0X3NpdGVfaWQYASABKANCB7pIBCICIABIAIgBARIwChJkZXZpY2VfaWRlbnRpZmllcnMYAiADKAlCFLpIEZIBDggBEJBOIgdyBRABGIACEjQKJ2ZvcmNlX2NsZWFyX2NvbmZsaWN0aW5nX3JhY2tfbWVtYmVyc2hpcBgDIAEoCEgBiAEBQhEKD190YXJnZXRfc2l0ZV9pZEIqCihfZm9yY2VfY2xlYXJfY29uZmxpY3RpbmdfcmFja19tZW1iZXJzaGlwIn4KEVBlckRldmljZUNvbmZsaWN0EhkKEWRldmljZV9pZGVudGlmaWVyGAEgASgJEjEKBnJlYXNvbhgCIAEoDjIhLnNpdGVzLnYxLlBlckRldmljZUNvbmZsaWN0UmVhc29uEhsKE2NvbmZsaWN0aW5nX3NpdGVfaWQYAyABKAMiZwobQXNzaWduRGV2aWNlc1RvU2l0ZVJlc3BvbnNlEhgKEHJlYXNzaWduZWRfY291bnQYASABKAMSLgoJY29uZmxpY3RzGAIgAygLMhsuc2l0ZXMudjEuUGVyRGV2aWNlQ29uZmxpY3QigAEKHEFzc2lnbkJ1aWxkaW5nc1RvU2l0ZVJlcXVlc3QSJwoMYnVpbGRpbmdfaWRzGAEgAygDQhG6SA6SAQsIARDoByIEIgIgABIkCg50YXJnZXRfc2l0ZV9pZBgCIAEoA0IHukgEIgIgAEgAiAEBQhEKD190YXJnZXRfc2l0ZV9pZCJfCh1Bc3NpZ25CdWlsZGluZ3NUb1NpdGVSZXNwb25zZRIdChVyZWFzc2lnbmVkX3JhY2tfY291bnQYASABKAMSHwoXcmVhc3NpZ25lZF9kZXZpY2VfY291bnQYAiABKAMieAoYQXNzaWduUmFja3NUb1NpdGVSZXF1ZXN0EiMKCHJhY2tfaWRzGAEgAygDQhG6SA6SAQsIARDoByIEIgIgABIkCg50YXJnZXRfc2l0ZV9pZBgCIAEoA0IHukgEIgIgAEgAiAEBQhEKD190YXJnZXRfc2l0ZV9pZCJcChlBc3NpZ25SYWNrc1RvU2l0ZVJlc3BvbnNlEh8KF3JlYXNzaWduZWRfZGV2aWNlX2NvdW50GAEgASgDEh4KFmNsZWFyZWRfYnVpbGRpbmdfY291bnQYAiABKAMiLwoTR2V0U2l0ZVN0YXRzUmVxdWVzdBIYCgdzaXRlX2lkGAEgASgDQge6SAQiAiAAIuMEChRHZXRTaXRlU3RhdHNSZXNwb25zZRIPCgdzaXRlX2lkGAEgASgDEhYKDmJ1aWxkaW5nX2NvdW50GAIgASgFEhQKDGRldmljZV9jb3VudBgDIAEoBRIXCg9yZXBvcnRpbmdfY291bnQYBCABKAUSGgoSdG90YWxfaGFzaHJhdGVfdGhzGAUgASgBEhoKEmF2Z19lZmZpY2llbmN5X2p0aBgGIAEoARIWCg50b3RhbF9wb3dlcl9rdxgHIAEoARIVCg1oYXNoaW5nX2NvdW50GAggASgFEhQKDGJyb2tlbl9jb3VudBgJIAEoBRIVCg1vZmZsaW5lX2NvdW50GAogASgFEhYKDnNsZWVwaW5nX2NvdW50GAsgASgFEiAKGGhhc2hyYXRlX3JlcG9ydGluZ19jb3VudBgMIAEoBRIiChplZmZpY2llbmN5X3JlcG9ydGluZ19jb3VudBgNIAEoBRIdChVwb3dlcl9yZXBvcnRpbmdfY291bnQYDiABKAUSGQoRbWluX3RlbXBlcmF0dXJlX2MYDyABKAESGQoRbWF4X3RlbXBlcmF0dXJlX2MYECABKAESIwobdGVtcGVyYXR1cmVfcmVwb3J0aW5nX2NvdW50GBEgASgFEiEKGWNvbnRyb2xfYm9hcmRfaXNzdWVfY291bnQYEiABKAUSFwoPZmFuX2lzc3VlX2NvdW50GBMgASgFEh4KFmhhc2hfYm9hcmRfaXNzdWVfY291bnQYFCABKAUSFwoPcHN1X2lzc3VlX2NvdW50GBUgASgFEhIKCnJhY2tfY291bnQYFiABKAUqswEKF1BlckRldmljZUNvbmZsaWN0UmVhc29uEioKJlBFUl9ERVZJQ0VfQ09ORkxJQ1RfUkVBU09OX1VOU1BFQ0lGSUVEEAASLworUEVSX0RFVklDRV9DT05GTElDVF9SRUFTT05fREVWSUNFX05PVF9GT1VORBABEjsKN1BFUl9ERVZJQ0VfQ09ORkxJQ1RfUkVBU09OX0RFVklDRV9JTl9SQUNLX0FUX09USEVSX1NJVEUQAjKpBQoLU2l0ZVNlcnZpY2USRAoJTGlzdFNpdGVzEhouc2l0ZXMudjEuTGlzdFNpdGVzUmVxdWVzdBobLnNpdGVzLnYxLkxpc3RTaXRlc1Jlc3BvbnNlEkcKCkNyZWF0ZVNpdGUSGy5zaXRlcy52MS5DcmVhdGVTaXRlUmVxdWVzdBocLnNpdGVzLnYxLkNyZWF0ZVNpdGVSZXNwb25zZRJHCgpVcGRhdGVTaXRlEhsuc2l0ZXMudjEuVXBkYXRlU2l0ZVJlcXVlc3QaHC5zaXRlcy52MS5VcGRhdGVTaXRlUmVzcG9uc2USRwoKRGVsZXRlU2l0ZRIbLnNpdGVzLnYxLkRlbGV0ZVNpdGVSZXF1ZXN0Ghwuc2l0ZXMudjEuRGVsZXRlU2l0ZVJlc3BvbnNlEmIKE0Fzc2lnbkRldmljZXNUb1NpdGUSJC5zaXRlcy52MS5Bc3NpZ25EZXZpY2VzVG9TaXRlUmVxdWVzdBolLnNpdGVzLnYxLkFzc2lnbkRldmljZXNUb1NpdGVSZXNwb25zZRJoChVBc3NpZ25CdWlsZGluZ3NUb1NpdGUSJi5zaXRlcy52MS5Bc3NpZ25CdWlsZGluZ3NUb1NpdGVSZXF1ZXN0Gicuc2l0ZXMudjEuQXNzaWduQnVpbGRpbmdzVG9TaXRlUmVzcG9uc2USXAoRQXNzaWduUmFja3NUb1NpdGUSIi5zaXRlcy52MS5Bc3NpZ25SYWNrc1RvU2l0ZVJlcXVlc3QaIy5zaXRlcy52MS5Bc3NpZ25SYWNrc1RvU2l0ZVJlc3BvbnNlEk0KDEdldFNpdGVTdGF0cxIdLnNpdGVzLnYxLkdldFNpdGVTdGF0c1JlcXVlc3QaHi5zaXRlcy52MS5HZXRTaXRlU3RhdHNSZXNwb25zZUKgAQoMY29tLnNpdGVzLnYxQgpTaXRlc1Byb3RvUAFaQ2dpdGh1Yi5jb20vYmxvY2svcHJvdG8tZmxlZXQvc2VydmVyL2dlbmVyYXRlZC9ncnBjL3NpdGVzL3YxO3NpdGVzdjGiAgNTWFiqAghTaXRlcy5WMcoCCFNpdGVzXFYx4gIUU2l0ZXNcVjFcR1BCTWV0YWRhdGHqAglTaXRlczo6VjFiBnByb3RvMw",
+    "ChRzaXRlcy92MS9zaXRlcy5wcm90bxIIc2l0ZXMudjEinQMKBFNpdGUSCgoCaWQYASABKAMSDAoEbmFtZRgCIAEoCRIVCg1sb2NhdGlvbl9jaXR5GAQgASgJEhYKDmxvY2F0aW9uX3N0YXRlGAUgASgJEhAKCHRpbWV6b25lGAYgASgJEhkKEXBvd2VyX2NhcGFjaXR5X213GAcgASgBEhYKDm5ldHdvcmtfY29uZmlnGAggASgJEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnVwZGF0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2FkZHJlc3MYCyABKAkSEwoLcG9zdGFsX2NvZGUYDSABKAkSDwoHY291bnRyeRgOIAEoCRINCgVub3RlcxgPIAEoCRIrCglwbGFjZW1lbnQYECABKAsyGC5jb21tb24udjEuUGxhY2VtZW50UmVmcxIMCgRzbHVnGBEgASgJSgQIAxAESgQIDBANUgtkZXNjcmlwdGlvblINYWRkcmVzc19saW5lMiKfAQoOU2l0ZVdpdGhDb3VudHMSHAoEc2l0ZRgBIAEoCzIOLnNpdGVzLnYxLlNpdGUSFAoMZGV2aWNlX2NvdW50GAIgASgDEhYKDmJ1aWxkaW5nX2NvdW50GAMgASgDEhIKCnJhY2tfY291bnQYBCABKAMSLQoKbGlzdF9zdGF0cxgFIAEoCzIZLmNvbW1vbi52MS5GbGVldExpc3RTdGF0cyKPAQoQTGlzdFNpdGVzUmVxdWVzdBI3ChVlcnJvcl9jb21wb25lbnRfdHlwZXMYASADKA4yGC5lcnJvcnMudjEuQ29tcG9uZW50VHlwZRJCChB0ZWxlbWV0cnlfcmFuZ2VzGAIgAygLMiguY29tbW9uLnYxLkZsZWV0TGlzdFRlbGVtZXRyeVJhbmdlRmlsdGVyIjwKEUxpc3RTaXRlc1Jlc3BvbnNlEicKBXNpdGVzGAEgAygLMhguc2l0ZXMudjEuU2l0ZVdpdGhDb3VudHMiMwoYUmVzb2x2ZVNpdGVCeVNsdWdSZXF1ZXN0EhcKBHNsdWcYASABKAlCCbpIBnIEEAEYPyI5ChlSZXNvbHZlU2l0ZUJ5U2x1Z1Jlc3BvbnNlEhwKBHNpdGUYASABKAsyDi5zaXRlcy52MS5TaXRlIu0CChFDcmVhdGVTaXRlUmVxdWVzdBIYCgRuYW1lGAEgASgJQgq6SAdyBRABGP8BEh8KDWxvY2F0aW9uX2NpdHkYAyABKAlCCLpIBXIDGP8BEiAKDmxvY2F0aW9uX3N0YXRlGAQgASgJQgi6SAVyAxj/ARIZCgh0aW1lem9uZRgFIAEoCUIHukgEcgIYQBIpChFwb3dlcl9jYXBhY2l0eV9tdxgGIAEoAUIOukgLEgkpAAAAAAAAAAASIQoObmV0d29ya19jb25maWcYByABKAlCCbpIBnIEKICAARIZCgdhZGRyZXNzGAggASgJQgi6SAVyAxj/ARIcCgtwb3N0YWxfY29kZRgKIAEoCUIHukgEcgIYIBIYCgdjb3VudHJ5GAsgASgJQge6SARyAhgCEhcKBW5vdGVzGAwgASgJQgi6SAVyAxiAIEoECAIQA0oECAkQClILZGVzY3JpcHRpb25SDWFkZHJlc3NfbGluZTIiUwoSQ3JlYXRlU2l0ZVJlc3BvbnNlEhwKBHNpdGUYASABKAsyDi5zaXRlcy52MS5TaXRlEh8KF25ldHdvcmtfY29uZmlnX3dhcm5pbmdzGAIgAygJIoIDChFVcGRhdGVTaXRlUmVxdWVzdBITCgJpZBgBIAEoA0IHukgEIgIgABIYCgRuYW1lGAIgASgJQgq6SAdyBRABGP8BEh8KDWxvY2F0aW9uX2NpdHkYBCABKAlCCLpIBXIDGP8BEiAKDmxvY2F0aW9uX3N0YXRlGAUgASgJQgi6SAVyAxj/ARIZCgh0aW1lem9uZRgGIAEoCUIHukgEcgIYQBIpChFwb3dlcl9jYXBhY2l0eV9tdxgHIAEoAUIOukgLEgkpAAAAAAAAAAASIQoObmV0d29ya19jb25maWcYCCABKAlCCbpIBnIEKICAARIZCgdhZGRyZXNzGAkgASgJQgi6SAVyAxj/ARIcCgtwb3N0YWxfY29kZRgLIAEoCUIHukgEcgIYIBIYCgdjb3VudHJ5GAwgASgJQge6SARyAhgCEhcKBW5vdGVzGA0gASgJQgi6SAVyAxiAIEoECAMQBEoECAoQC1ILZGVzY3JpcHRpb25SDWFkZHJlc3NfbGluZTIiUwoSVXBkYXRlU2l0ZVJlc3BvbnNlEhwKBHNpdGUYASABKAsyDi5zaXRlcy52MS5TaXRlEh8KF25ldHdvcmtfY29uZmlnX3dhcm5pbmdzGAIgAygJIigKEURlbGV0ZVNpdGVSZXF1ZXN0EhMKAmlkGAEgASgDQge6SAQiAiAAInQKEkRlbGV0ZVNpdGVSZXNwb25zZRIfChd1bmFzc2lnbmVkX2RldmljZV9jb3VudBgBIAEoAxIeChZkZWxldGVkX2J1aWxkaW5nX2NvdW50GAIgASgDEh0KFXVuYXNzaWduZWRfcmFja19jb3VudBgDIAEoAyLpAQoaQXNzaWduRGV2aWNlc1RvU2l0ZVJlcXVlc3QSJAoOdGFyZ2V0X3NpdGVfaWQYASABKANCB7pIBCICIABIAIgBARIwChJkZXZpY2VfaWRlbnRpZmllcnMYAiADKAlCFLpIEZIBDggBEJBOIgdyBRABGIACEjQKJ2ZvcmNlX2NsZWFyX2NvbmZsaWN0aW5nX3JhY2tfbWVtYmVyc2hpcBgDIAEoCEgBiAEBQhEKD190YXJnZXRfc2l0ZV9pZEIqCihfZm9yY2VfY2xlYXJfY29uZmxpY3RpbmdfcmFja19tZW1iZXJzaGlwIn4KEVBlckRldmljZUNvbmZsaWN0EhkKEWRldmljZV9pZGVudGlmaWVyGAEgASgJEjEKBnJlYXNvbhgCIAEoDjIhLnNpdGVzLnYxLlBlckRldmljZUNvbmZsaWN0UmVhc29uEhsKE2NvbmZsaWN0aW5nX3NpdGVfaWQYAyABKAMiZwobQXNzaWduRGV2aWNlc1RvU2l0ZVJlc3BvbnNlEhgKEHJlYXNzaWduZWRfY291bnQYASABKAMSLgoJY29uZmxpY3RzGAIgAygLMhsuc2l0ZXMudjEuUGVyRGV2aWNlQ29uZmxpY3QigAEKHEFzc2lnbkJ1aWxkaW5nc1RvU2l0ZVJlcXVlc3QSJwoMYnVpbGRpbmdfaWRzGAEgAygDQhG6SA6SAQsIARDoByIEIgIgABIkCg50YXJnZXRfc2l0ZV9pZBgCIAEoA0IHukgEIgIgAEgAiAEBQhEKD190YXJnZXRfc2l0ZV9pZCJfCh1Bc3NpZ25CdWlsZGluZ3NUb1NpdGVSZXNwb25zZRIdChVyZWFzc2lnbmVkX3JhY2tfY291bnQYASABKAMSHwoXcmVhc3NpZ25lZF9kZXZpY2VfY291bnQYAiABKAMieAoYQXNzaWduUmFja3NUb1NpdGVSZXF1ZXN0EiMKCHJhY2tfaWRzGAEgAygDQhG6SA6SAQsIARDoByIEIgIgABIkCg50YXJnZXRfc2l0ZV9pZBgCIAEoA0IHukgEIgIgAEgAiAEBQhEKD190YXJnZXRfc2l0ZV9pZCJcChlBc3NpZ25SYWNrc1RvU2l0ZVJlc3BvbnNlEh8KF3JlYXNzaWduZWRfZGV2aWNlX2NvdW50GAEgASgDEh4KFmNsZWFyZWRfYnVpbGRpbmdfY291bnQYAiABKAMiLwoTR2V0U2l0ZVN0YXRzUmVxdWVzdBIYCgdzaXRlX2lkGAEgASgDQge6SAQiAiAAIuMEChRHZXRTaXRlU3RhdHNSZXNwb25zZRIPCgdzaXRlX2lkGAEgASgDEhYKDmJ1aWxkaW5nX2NvdW50GAIgASgFEhQKDGRldmljZV9jb3VudBgDIAEoBRIXCg9yZXBvcnRpbmdfY291bnQYBCABKAUSGgoSdG90YWxfaGFzaHJhdGVfdGhzGAUgASgBEhoKEmF2Z19lZmZpY2llbmN5X2p0aBgGIAEoARIWCg50b3RhbF9wb3dlcl9rdxgHIAEoARIVCg1oYXNoaW5nX2NvdW50GAggASgFEhQKDGJyb2tlbl9jb3VudBgJIAEoBRIVCg1vZmZsaW5lX2NvdW50GAogASgFEhYKDnNsZWVwaW5nX2NvdW50GAsgASgFEiAKGGhhc2hyYXRlX3JlcG9ydGluZ19jb3VudBgMIAEoBRIiChplZmZpY2llbmN5X3JlcG9ydGluZ19jb3VudBgNIAEoBRIdChVwb3dlcl9yZXBvcnRpbmdfY291bnQYDiABKAUSGQoRbWluX3RlbXBlcmF0dXJlX2MYDyABKAESGQoRbWF4X3RlbXBlcmF0dXJlX2MYECABKAESIwobdGVtcGVyYXR1cmVfcmVwb3J0aW5nX2NvdW50GBEgASgFEiEKGWNvbnRyb2xfYm9hcmRfaXNzdWVfY291bnQYEiABKAUSFwoPZmFuX2lzc3VlX2NvdW50GBMgASgFEh4KFmhhc2hfYm9hcmRfaXNzdWVfY291bnQYFCABKAUSFwoPcHN1X2lzc3VlX2NvdW50GBUgASgFEhIKCnJhY2tfY291bnQYFiABKAUqswEKF1BlckRldmljZUNvbmZsaWN0UmVhc29uEioKJlBFUl9ERVZJQ0VfQ09ORkxJQ1RfUkVBU09OX1VOU1BFQ0lGSUVEEAASLworUEVSX0RFVklDRV9DT05GTElDVF9SRUFTT05fREVWSUNFX05PVF9GT1VORBABEjsKN1BFUl9ERVZJQ0VfQ09ORkxJQ1RfUkVBU09OX0RFVklDRV9JTl9SQUNLX0FUX09USEVSX1NJVEUQAjKHBgoLU2l0ZVNlcnZpY2USRAoJTGlzdFNpdGVzEhouc2l0ZXMudjEuTGlzdFNpdGVzUmVxdWVzdBobLnNpdGVzLnYxLkxpc3RTaXRlc1Jlc3BvbnNlElwKEVJlc29sdmVTaXRlQnlTbHVnEiIuc2l0ZXMudjEuUmVzb2x2ZVNpdGVCeVNsdWdSZXF1ZXN0GiMuc2l0ZXMudjEuUmVzb2x2ZVNpdGVCeVNsdWdSZXNwb25zZRJHCgpDcmVhdGVTaXRlEhsuc2l0ZXMudjEuQ3JlYXRlU2l0ZVJlcXVlc3QaHC5zaXRlcy52MS5DcmVhdGVTaXRlUmVzcG9uc2USRwoKVXBkYXRlU2l0ZRIbLnNpdGVzLnYxLlVwZGF0ZVNpdGVSZXF1ZXN0Ghwuc2l0ZXMudjEuVXBkYXRlU2l0ZVJlc3BvbnNlEkcKCkRlbGV0ZVNpdGUSGy5zaXRlcy52MS5EZWxldGVTaXRlUmVxdWVzdBocLnNpdGVzLnYxLkRlbGV0ZVNpdGVSZXNwb25zZRJiChNBc3NpZ25EZXZpY2VzVG9TaXRlEiQuc2l0ZXMudjEuQXNzaWduRGV2aWNlc1RvU2l0ZVJlcXVlc3QaJS5zaXRlcy52MS5Bc3NpZ25EZXZpY2VzVG9TaXRlUmVzcG9uc2USaAoVQXNzaWduQnVpbGRpbmdzVG9TaXRlEiYuc2l0ZXMudjEuQXNzaWduQnVpbGRpbmdzVG9TaXRlUmVxdWVzdBonLnNpdGVzLnYxLkFzc2lnbkJ1aWxkaW5nc1RvU2l0ZVJlc3BvbnNlElwKEUFzc2lnblJhY2tzVG9TaXRlEiIuc2l0ZXMudjEuQXNzaWduUmFja3NUb1NpdGVSZXF1ZXN0GiMuc2l0ZXMudjEuQXNzaWduUmFja3NUb1NpdGVSZXNwb25zZRJNCgxHZXRTaXRlU3RhdHMSHS5zaXRlcy52MS5HZXRTaXRlU3RhdHNSZXF1ZXN0Gh4uc2l0ZXMudjEuR2V0U2l0ZVN0YXRzUmVzcG9uc2VCoAEKDGNvbS5zaXRlcy52MUIKU2l0ZXNQcm90b1ABWkNnaXRodWIuY29tL2Jsb2NrL3Byb3RvLWZsZWV0L3NlcnZlci9nZW5lcmF0ZWQvZ3JwYy9zaXRlcy92MTtzaXRlc3YxogIDU1hYqgIIU2l0ZXMuVjHKAghTaXRlc1xWMeICFFNpdGVzXFYxXEdQQk1ldGFkYXRh6gIJU2l0ZXM6OlYxYgZwcm90bzM",
     [
       file_buf_validate_validate,
       file_common_v1_common,
@@ -126,6 +126,15 @@ export type Site = Message<"sites.v1.Site"> & {
    * @generated from field: common.v1.PlacementRefs placement = 16;
    */
   placement?: PlacementRefs | undefined;
+
+  /**
+   * URL-safe, immutable alias generated by the server for scoped app
+   * routes. Numeric id remains the API identifier for filters and
+   * mutations; slug is read-only for v1.
+   *
+   * @generated from field: string slug = 17;
+   */
+  slug: string;
 };
 
 /**
@@ -220,6 +229,42 @@ export type ListSitesResponse = Message<"sites.v1.ListSitesResponse"> & {
 export const ListSitesResponseSchema: GenMessage<ListSitesResponse> = /*@__PURE__*/ messageDesc(file_sites_v1_sites, 3);
 
 /**
+ * @generated from message sites.v1.ResolveSiteBySlugRequest
+ */
+export type ResolveSiteBySlugRequest = Message<"sites.v1.ResolveSiteBySlugRequest"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+};
+
+/**
+ * Describes the message sites.v1.ResolveSiteBySlugRequest.
+ * Use `create(ResolveSiteBySlugRequestSchema)` to create a new message.
+ */
+export const ResolveSiteBySlugRequestSchema: GenMessage<ResolveSiteBySlugRequest> =
+  /*@__PURE__*/
+  messageDesc(file_sites_v1_sites, 4);
+
+/**
+ * @generated from message sites.v1.ResolveSiteBySlugResponse
+ */
+export type ResolveSiteBySlugResponse = Message<"sites.v1.ResolveSiteBySlugResponse"> & {
+  /**
+   * @generated from field: sites.v1.Site site = 1;
+   */
+  site?: Site | undefined;
+};
+
+/**
+ * Describes the message sites.v1.ResolveSiteBySlugResponse.
+ * Use `create(ResolveSiteBySlugResponseSchema)` to create a new message.
+ */
+export const ResolveSiteBySlugResponseSchema: GenMessage<ResolveSiteBySlugResponse> =
+  /*@__PURE__*/
+  messageDesc(file_sites_v1_sites, 5);
+
+/**
  * @generated from message sites.v1.CreateSiteRequest
  */
 export type CreateSiteRequest = Message<"sites.v1.CreateSiteRequest"> & {
@@ -293,7 +338,7 @@ export type CreateSiteRequest = Message<"sites.v1.CreateSiteRequest"> & {
  * Describes the message sites.v1.CreateSiteRequest.
  * Use `create(CreateSiteRequestSchema)` to create a new message.
  */
-export const CreateSiteRequestSchema: GenMessage<CreateSiteRequest> = /*@__PURE__*/ messageDesc(file_sites_v1_sites, 4);
+export const CreateSiteRequestSchema: GenMessage<CreateSiteRequest> = /*@__PURE__*/ messageDesc(file_sites_v1_sites, 6);
 
 /**
  * @generated from message sites.v1.CreateSiteResponse
@@ -320,7 +365,7 @@ export type CreateSiteResponse = Message<"sites.v1.CreateSiteResponse"> & {
  */
 export const CreateSiteResponseSchema: GenMessage<CreateSiteResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 5);
+  messageDesc(file_sites_v1_sites, 7);
 
 /**
  * @generated from message sites.v1.UpdateSiteRequest
@@ -386,7 +431,7 @@ export type UpdateSiteRequest = Message<"sites.v1.UpdateSiteRequest"> & {
  * Describes the message sites.v1.UpdateSiteRequest.
  * Use `create(UpdateSiteRequestSchema)` to create a new message.
  */
-export const UpdateSiteRequestSchema: GenMessage<UpdateSiteRequest> = /*@__PURE__*/ messageDesc(file_sites_v1_sites, 6);
+export const UpdateSiteRequestSchema: GenMessage<UpdateSiteRequest> = /*@__PURE__*/ messageDesc(file_sites_v1_sites, 8);
 
 /**
  * @generated from message sites.v1.UpdateSiteResponse
@@ -409,7 +454,7 @@ export type UpdateSiteResponse = Message<"sites.v1.UpdateSiteResponse"> & {
  */
 export const UpdateSiteResponseSchema: GenMessage<UpdateSiteResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 7);
+  messageDesc(file_sites_v1_sites, 9);
 
 /**
  * @generated from message sites.v1.DeleteSiteRequest
@@ -425,7 +470,9 @@ export type DeleteSiteRequest = Message<"sites.v1.DeleteSiteRequest"> & {
  * Describes the message sites.v1.DeleteSiteRequest.
  * Use `create(DeleteSiteRequestSchema)` to create a new message.
  */
-export const DeleteSiteRequestSchema: GenMessage<DeleteSiteRequest> = /*@__PURE__*/ messageDesc(file_sites_v1_sites, 8);
+export const DeleteSiteRequestSchema: GenMessage<DeleteSiteRequest> =
+  /*@__PURE__*/
+  messageDesc(file_sites_v1_sites, 10);
 
 /**
  * @generated from message sites.v1.DeleteSiteResponse
@@ -455,7 +502,7 @@ export type DeleteSiteResponse = Message<"sites.v1.DeleteSiteResponse"> & {
  */
 export const DeleteSiteResponseSchema: GenMessage<DeleteSiteResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 9);
+  messageDesc(file_sites_v1_sites, 11);
 
 /**
  * @generated from message sites.v1.AssignDevicesToSiteRequest
@@ -497,7 +544,7 @@ export type AssignDevicesToSiteRequest = Message<"sites.v1.AssignDevicesToSiteRe
  */
 export const AssignDevicesToSiteRequestSchema: GenMessage<AssignDevicesToSiteRequest> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 10);
+  messageDesc(file_sites_v1_sites, 12);
 
 /**
  * PerDeviceConflict carries the per-device error details surfaced
@@ -532,7 +579,7 @@ export type PerDeviceConflict = Message<"sites.v1.PerDeviceConflict"> & {
  */
 export const PerDeviceConflictSchema: GenMessage<PerDeviceConflict> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 11);
+  messageDesc(file_sites_v1_sites, 13);
 
 /**
  * @generated from message sites.v1.AssignDevicesToSiteResponse
@@ -557,7 +604,7 @@ export type AssignDevicesToSiteResponse = Message<"sites.v1.AssignDevicesToSiteR
  */
 export const AssignDevicesToSiteResponseSchema: GenMessage<AssignDevicesToSiteResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 12);
+  messageDesc(file_sites_v1_sites, 14);
 
 /**
  * @generated from message sites.v1.AssignBuildingsToSiteRequest
@@ -582,7 +629,7 @@ export type AssignBuildingsToSiteRequest = Message<"sites.v1.AssignBuildingsToSi
  */
 export const AssignBuildingsToSiteRequestSchema: GenMessage<AssignBuildingsToSiteRequest> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 13);
+  messageDesc(file_sites_v1_sites, 15);
 
 /**
  * @generated from message sites.v1.AssignBuildingsToSiteResponse
@@ -609,7 +656,7 @@ export type AssignBuildingsToSiteResponse = Message<"sites.v1.AssignBuildingsToS
  */
 export const AssignBuildingsToSiteResponseSchema: GenMessage<AssignBuildingsToSiteResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 14);
+  messageDesc(file_sites_v1_sites, 16);
 
 /**
  * @generated from message sites.v1.AssignRacksToSiteRequest
@@ -635,7 +682,7 @@ export type AssignRacksToSiteRequest = Message<"sites.v1.AssignRacksToSiteReques
  */
 export const AssignRacksToSiteRequestSchema: GenMessage<AssignRacksToSiteRequest> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 15);
+  messageDesc(file_sites_v1_sites, 17);
 
 /**
  * @generated from message sites.v1.AssignRacksToSiteResponse
@@ -665,7 +712,7 @@ export type AssignRacksToSiteResponse = Message<"sites.v1.AssignRacksToSiteRespo
  */
 export const AssignRacksToSiteResponseSchema: GenMessage<AssignRacksToSiteResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 16);
+  messageDesc(file_sites_v1_sites, 18);
 
 /**
  * @generated from message sites.v1.GetSiteStatsRequest
@@ -683,7 +730,7 @@ export type GetSiteStatsRequest = Message<"sites.v1.GetSiteStatsRequest"> & {
  */
 export const GetSiteStatsRequestSchema: GenMessage<GetSiteStatsRequest> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 17);
+  messageDesc(file_sites_v1_sites, 19);
 
 /**
  * GetSiteStatsResponse mirrors device_set.v1.DeviceSetStats for the
@@ -819,7 +866,7 @@ export type GetSiteStatsResponse = Message<"sites.v1.GetSiteStatsResponse"> & {
  */
 export const GetSiteStatsResponseSchema: GenMessage<GetSiteStatsResponse> =
   /*@__PURE__*/
-  messageDesc(file_sites_v1_sites, 18);
+  messageDesc(file_sites_v1_sites, 20);
 
 /**
  * PerDeviceConflictReason enumerates the reasons a device can be
@@ -871,6 +918,19 @@ export const SiteService: GenService<{
     methodKind: "unary";
     input: typeof ListSitesRequestSchema;
     output: typeof ListSitesResponseSchema;
+  };
+  /**
+   * ResolveSiteBySlug returns the live site for a scoped-route slug.
+   * Unlike ListSites, this can be authorized against the resolved
+   * site id, so site-scoped operators do not need org-wide catalog
+   * access just to enter /{siteSlug}/... routes.
+   *
+   * @generated from rpc sites.v1.SiteService.ResolveSiteBySlug
+   */
+  resolveSiteBySlug: {
+    methodKind: "unary";
+    input: typeof ResolveSiteBySlugRequestSchema;
+    output: typeof ResolveSiteBySlugResponseSchema;
   };
   /**
    * CreateSite inserts a new site. Name must be unique within the

@@ -40,7 +40,7 @@ import {
   importUpdatePassword,
   importWelcomePage,
 } from "./routePrefetch";
-import { onboardingClient } from "@/protoFleet/api/clients";
+import { onboardingClient, sitesClient } from "@/protoFleet/api/clients";
 import {
   minersRedirectLoader,
   racksRedirectLoader,
@@ -52,7 +52,7 @@ import {
   SiteScopeLayout,
   SiteScopeProvider,
 } from "@/protoFleet/routing/siteScope";
-import { sanitizeActiveSite } from "@/protoFleet/store/types/activeSite";
+import { type ActiveSite, sanitizeActiveSite } from "@/protoFleet/store/types/activeSite";
 import { useFleetStore } from "@/protoFleet/store/useFleetStore";
 // eslint-disable-next-line no-restricted-imports -- Fleet shell embeds the protoOS single-miner experience
 import { routerConfig as singleMinerRoutes } from "@/protoOS/router";
@@ -129,13 +129,41 @@ const welcomeLoader = async () => {
 
 const appEntryLoader = () => redirect(appEntryPath(sanitizeActiveSite(useFleetStore.getState().ui.activeSite)));
 
-const scopedGroupDetailRedirectLoader = ({ params, request }: LoaderFunctionArgs) => {
-  const activeSite = activeSiteFromSegment(params.siteScope);
-  if (!activeSite) {
-    return redirect("/");
+// Group detail is canonical/unscoped, so a scoped URL like
+// /north/groups/team-a redirects to /groups/team-a while preserving the
+// operator's site selection. Site slugs only resolve to an id via the sites
+// list, which a synchronous loader doesn't have — so resolve the slug over
+// the wire (unassigned needs no lookup) and set the store scope before
+// redirecting. An unresolvable segment still lands on the group page (the
+// page is unscoped) rather than bouncing the user to "/".
+const resolveScopeSegment = async (segment: string | undefined, signal: AbortSignal): Promise<ActiveSite | null> => {
+  // Covers "unassigned"; site slugs return null here without a slug map.
+  const local = activeSiteFromSegment(segment);
+  if (local) return local;
+  if (!segment) return null;
+  try {
+    const response = await sitesClient.resolveSiteBySlug({ slug: segment }, { signal });
+    const id = (response.site?.id ?? 0n).toString();
+    if (response.site?.slug && id !== "0") {
+      return { kind: "site", id, slug: response.site.slug };
+    }
+  } catch {
+    // Unknown or unreachable slug (or an aborted request) — fall through.
   }
+  return null;
+};
 
-  useFleetStore.getState().ui.setActiveSite(activeSite);
+const scopedGroupDetailRedirectLoader = async ({ params, request }: LoaderFunctionArgs) => {
+  const scope = await resolveScopeSegment(params.siteScope, request.signal);
+  // The slug lookup is async, so a superseded navigation may have aborted this
+  // loader while it was in flight. Skip the store write + redirect in that case
+  // so a stale route can't leave the picker scoped to the wrong site.
+  if (request.signal.aborted) {
+    return null;
+  }
+  if (scope) {
+    useFleetStore.getState().ui.setActiveSite(scope);
+  }
   const url = new URL(request.url);
   const groupLabel = params.groupLabel ? encodeURIComponent(params.groupLabel) : "";
   return redirect(`/groups/${groupLabel}${url.search}`);

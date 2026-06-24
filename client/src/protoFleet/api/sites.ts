@@ -21,6 +21,14 @@ interface ListSitesProps {
   onFinally?: () => void;
 }
 
+interface ResolveSiteBySlugProps {
+  slug: string;
+  signal?: AbortSignal;
+  onSuccess?: (site: Site) => void;
+  onError?: (message: string, code?: Code) => void;
+  onFinally?: () => void;
+}
+
 // Parse a string-encoded bigint id (the form we get from URL params and
 // localStorage). Rejects empty strings, non-numeric input, and non-positive
 // values so callers can short-circuit cleanly on bad input.
@@ -40,6 +48,36 @@ export const parseBigIntId = (value: unknown): bigint | null => {
 export const buildKnownSiteIds = (sites: SiteWithCounts[] | undefined): Set<string> | undefined => {
   if (!sites) return undefined;
   return new Set(sites.map((s) => (s.site?.id ?? 0n).toString()).filter((id) => id !== "0"));
+};
+
+export const buildSiteSlugToId = (sites: SiteWithCounts[] | undefined): Map<string, string> | undefined => {
+  if (!sites) return undefined;
+  const out = new Map<string, string>();
+  for (const row of sites) {
+    const site = row.site;
+    const id = (site?.id ?? 0n).toString();
+    if (site?.slug && id !== "0") {
+      out.set(site.slug, id);
+    }
+  }
+  return out;
+};
+
+// id (decimal string) -> current slug, from the latest ListSites response.
+// Lets useActiveSite reconcile a stored selection whose slug went stale after
+// a rename in another tab/session (same id, new slug) so the persisted entry
+// path and picker don't emit a dead slug. `undefined` until ListSites returns.
+export const buildSiteSlugById = (sites: SiteWithCounts[] | undefined): Map<string, string> | undefined => {
+  if (!sites) return undefined;
+  const out = new Map<string, string>();
+  for (const row of sites) {
+    const site = row.site;
+    const id = (site?.id ?? 0n).toString();
+    if (site?.slug && id !== "0") {
+      out.set(id, site.slug);
+    }
+  }
+  return out;
 };
 
 // Shared shape passed between SiteDetailsModal and ManageSiteModal so the
@@ -169,6 +207,32 @@ interface AssignRacksToSiteProps {
 
 const useSites = () => {
   const { handleAuthErrors } = useAuthErrors();
+
+  const resolveSiteBySlug = useCallback(
+    async ({ slug, signal, onSuccess, onError, onFinally }: ResolveSiteBySlugProps) => {
+      try {
+        const response = await sitesClient.resolveSiteBySlug({ slug }, { signal });
+        if (signal?.aborted) return;
+        if (response.site) {
+          onSuccess?.(response.site);
+        } else {
+          onError?.("Site not found", Code.NotFound);
+        }
+      } catch (err) {
+        if (signal?.aborted) return;
+        handleAuthErrors({
+          error: err,
+          onError: (error) => {
+            const code = error instanceof ConnectError ? error.code : undefined;
+            onError?.(getErrorMessage(error), code);
+          },
+        });
+      } finally {
+        onFinally?.();
+      }
+    },
+    [handleAuthErrors],
+  );
 
   const listSites = useCallback(
     async ({ signal, errorComponentTypes, telemetryRanges, onSuccess, onError, onFinally }: ListSitesProps = {}) => {
@@ -397,6 +461,7 @@ const useSites = () => {
   );
 
   return {
+    resolveSiteBySlug,
     listSites,
     createSite,
     updateSite,

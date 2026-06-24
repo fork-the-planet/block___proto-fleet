@@ -30,8 +30,9 @@ vi.mock("@/protoFleet/api/sites", () => ({
   useSites: () => ({
     listSites: mockListSites,
   }),
-  // SitePicker imports this; stub keeps the picker from throwing.
+  // SitePicker imports these; stubs keep the picker from throwing.
   buildKnownSiteIds: () => new Set<string>(),
+  buildSiteSlugById: () => new Map<string, string>(),
 }));
 
 vi.mock("@/shared/hooks/useWindowDimensions", () => ({
@@ -209,8 +210,8 @@ describe("PageHeader", () => {
     });
 
     render(
-      <MemoryRouter initialEntries={["/7/fleet/miners"]}>
-        <SiteScopeProvider value={{ kind: "site", id: "7" }}>
+      <MemoryRouter initialEntries={["/north/fleet/miners"]}>
+        <SiteScopeProvider value={{ kind: "site", id: "7", slug: "north" }}>
           <PageHeader
             schedulePillData={createSchedulePillData()}
             activeCurtailmentEvent={{
@@ -226,7 +227,7 @@ describe("PageHeader", () => {
       </MemoryRouter>,
     );
 
-    expect(mockCurtailmentPill).toHaveBeenCalledWith(expect.objectContaining({ detailsPath: "/7/energy" }));
+    expect(mockCurtailmentPill).toHaveBeenCalledWith(expect.objectContaining({ detailsPath: "/north/energy" }));
   });
 
   it("uses stored site scope for the curtailment pill Energy link outside scoped routes", () => {
@@ -235,7 +236,7 @@ describe("PageHeader", () => {
       isTablet: false,
     });
     useFleetStore.setState((state) => {
-      state.ui.activeSite = { kind: "site", id: "7" };
+      state.ui.activeSite = { kind: "site", id: "7", slug: "north" };
     });
 
     render(
@@ -254,7 +255,7 @@ describe("PageHeader", () => {
       </MemoryRouter>,
     );
 
-    expect(mockCurtailmentPill).toHaveBeenCalledWith(expect.objectContaining({ detailsPath: "/7/energy" }));
+    expect(mockCurtailmentPill).toHaveBeenCalledWith(expect.objectContaining({ detailsPath: "/north/energy" }));
   });
 
   it("hides the curtailment pill without curtailment read permission", () => {

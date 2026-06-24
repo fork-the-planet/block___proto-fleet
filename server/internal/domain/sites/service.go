@@ -6,6 +6,7 @@ package sites
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -115,9 +116,27 @@ func (s *Service) CreateSite(ctx context.Context, params models.CreateSiteParams
 		return nil, err
 	}
 
-	site, err := s.store.CreateSite(ctx, params)
+	usedSlugs, err := s.store.ListSiteSlugs(ctx, params.OrgID)
 	if err != nil {
 		return nil, err
+	}
+	used := make(map[string]struct{}, len(usedSlugs))
+	for _, slug := range usedSlugs {
+		used[slug] = struct{}{}
+	}
+
+	var site *models.Site
+	for {
+		params.Slug = generateSiteSlug(params.Name, used)
+		site, err = s.store.CreateSite(ctx, params)
+		if errors.Is(err, models.ErrSiteSlugCollision) {
+			used[params.Slug] = struct{}{}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		break
 	}
 
 	orgID := params.OrgID
@@ -159,9 +178,48 @@ func (s *Service) UpdateSite(ctx context.Context, params models.UpdateSiteParams
 		return nil, err
 	}
 
-	site, err := s.store.UpdateSite(ctx, params)
+	// The slug is not user-editable, but it tracks the site name so scoped
+	// URLs stay legible. Regenerate it only when the name actually changes;
+	// an edit that leaves the name untouched keeps the existing slug stable
+	// so unrelated field edits never churn the site's URL.
+	current, err := s.store.GetSite(ctx, params.OrgID, params.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	var site *models.Site
+	if params.Name == current.Name {
+		params.Slug = current.Slug
+		site, err = s.store.UpdateSite(ctx, params)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		usedSlugs, err := s.store.ListSiteSlugs(ctx, params.OrgID)
+		if err != nil {
+			return nil, err
+		}
+		// Exclude our own current slug so a rename can re-derive the same
+		// base (or a shorter one) without colliding with itself.
+		used := make(map[string]struct{}, len(usedSlugs))
+		for _, slug := range usedSlugs {
+			if slug == current.Slug {
+				continue
+			}
+			used[slug] = struct{}{}
+		}
+		for {
+			params.Slug = generateSiteSlug(params.Name, used)
+			site, err = s.store.UpdateSite(ctx, params)
+			if errors.Is(err, models.ErrSiteSlugCollision) {
+				used[params.Slug] = struct{}{}
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
 	}
 
 	orgID := params.OrgID
@@ -224,6 +282,12 @@ func (s *Service) ListSites(ctx context.Context, orgID int64, statsFilter fleetl
 		rows = filterSiteRowsByListStats(rows, statsFilter)
 	}
 	return rows, nil
+}
+
+// GetSiteBySlug returns a live site in the org by its URL slug. The slug is
+// not user-editable but is regenerated from the name on a rename.
+func (s *Service) GetSiteBySlug(ctx context.Context, orgID int64, slug string) (*models.Site, error) {
+	return s.store.GetSiteBySlug(ctx, orgID, slug)
 }
 
 // DeleteSite soft-deletes the site and cascade-unassigns or deletes its

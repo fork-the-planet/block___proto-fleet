@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"connectrpc.com/connect"
 
 	"github.com/block/proto-fleet/server/generated/sqlc"
 	"github.com/block/proto-fleet/server/internal/domain/fleeterror"
+	sitesdomain "github.com/block/proto-fleet/server/internal/domain/sites"
 	"github.com/block/proto-fleet/server/internal/domain/sites/models"
 	"github.com/block/proto-fleet/server/internal/domain/stores/interfaces"
 )
@@ -24,9 +26,17 @@ func NewSQLSiteStore(conn *sql.DB) *SQLSiteStore {
 }
 
 func (s *SQLSiteStore) CreateSite(ctx context.Context, params models.CreateSiteParams) (*models.Site, error) {
+	if strings.TrimSpace(params.Slug) == "" {
+		usedSlugs, err := s.ListSiteSlugs(ctx, params.OrgID)
+		if err != nil {
+			return nil, err
+		}
+		params.Slug = sitesdomain.GenerateSiteSlug(params.Name, usedSlugs)
+	}
 	row, err := s.GetQueries(ctx).CreateSite(ctx, sqlc.CreateSiteParams{
 		OrgID:           params.OrgID,
 		Name:            params.Name,
+		Slug:            params.Slug,
 		LocationCity:    emptyToNullString(params.LocationCity),
 		LocationState:   emptyToNullString(params.LocationState),
 		Timezone:        emptyToNullString(params.Timezone),
@@ -38,6 +48,9 @@ func (s *SQLSiteStore) CreateSite(ctx context.Context, params models.CreateSiteP
 		Notes:           emptyToNullString(params.Notes),
 	})
 	if err != nil {
+		if isUniqueViolationOn(err, "uk_site_org_slug") {
+			return nil, models.ErrSiteSlugCollision
+		}
 		if isUniqueViolation(err) {
 			return nil, fleeterror.NewPlainError("a site with this name already exists", connect.CodeAlreadyExists).WithCallerStackTrace()
 		}
@@ -59,6 +72,18 @@ func (s *SQLSiteStore) GetSite(ctx context.Context, orgID, id int64) (*models.Si
 	return &out, nil
 }
 
+func (s *SQLSiteStore) GetSiteBySlug(ctx context.Context, orgID int64, slug string) (*models.Site, error) {
+	row, err := s.GetQueries(ctx).GetSiteBySlug(ctx, sqlc.GetSiteBySlugParams{Slug: slug, OrgID: orgID})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fleeterror.NewNotFoundErrorf("site %q not found", slug)
+		}
+		return nil, fleeterror.NewInternalErrorf("failed to get site by slug: %v", err)
+	}
+	out := siteFromRow(row)
+	return &out, nil
+}
+
 func (s *SQLSiteStore) ListSites(ctx context.Context, orgID int64) ([]models.SiteWithCounts, error) {
 	rows, err := s.GetQueries(ctx).ListSites(ctx, orgID)
 	if err != nil {
@@ -71,6 +96,7 @@ func (s *SQLSiteStore) ListSites(ctx context.Context, orgID int64) ([]models.Sit
 				ID:              row.ID,
 				OrgID:           row.OrgID,
 				Name:            row.Name,
+				Slug:            row.Slug,
 				LocationCity:    row.LocationCity.String,
 				LocationState:   row.LocationState.String,
 				Timezone:        row.Timezone.String,
@@ -89,6 +115,14 @@ func (s *SQLSiteStore) ListSites(ctx context.Context, orgID int64) ([]models.Sit
 		})
 	}
 	return out, nil
+}
+
+func (s *SQLSiteStore) ListSiteSlugs(ctx context.Context, orgID int64) ([]string, error) {
+	slugs, err := s.GetQueries(ctx).ListSiteSlugs(ctx, orgID)
+	if err != nil {
+		return nil, fleeterror.NewInternalErrorf("failed to list site slugs: %v", err)
+	}
+	return slugs, nil
 }
 
 func (s *SQLSiteStore) CountRacksBySite(ctx context.Context, orgID, siteID int64) (int64, error) {
@@ -117,6 +151,7 @@ func (s *SQLSiteStore) UpdateSite(ctx context.Context, params models.UpdateSiteP
 	q := s.GetQueries(ctx)
 	if err := q.UpdateSite(ctx, sqlc.UpdateSiteParams{
 		Name:            params.Name,
+		Slug:            params.Slug,
 		LocationCity:    emptyToNullString(params.LocationCity),
 		LocationState:   emptyToNullString(params.LocationState),
 		Timezone:        emptyToNullString(params.Timezone),
@@ -129,6 +164,9 @@ func (s *SQLSiteStore) UpdateSite(ctx context.Context, params models.UpdateSiteP
 		ID:              params.ID,
 		OrgID:           params.OrgID,
 	}); err != nil {
+		if isUniqueViolationOn(err, "uk_site_org_slug") {
+			return nil, models.ErrSiteSlugCollision
+		}
 		if isUniqueViolation(err) {
 			return nil, fleeterror.NewPlainError("a site with this name already exists", connect.CodeAlreadyExists).WithCallerStackTrace()
 		}
@@ -428,6 +466,7 @@ func siteFromRow(row sqlc.Site) models.Site {
 		ID:              row.ID,
 		OrgID:           row.OrgID,
 		Name:            row.Name,
+		Slug:            row.Slug,
 		LocationCity:    row.LocationCity.String,
 		LocationState:   row.LocationState.String,
 		Timezone:        row.Timezone.String,

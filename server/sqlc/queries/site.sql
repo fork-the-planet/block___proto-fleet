@@ -5,6 +5,7 @@
 INSERT INTO site (
     org_id,
     name,
+    slug,
     location_city,
     location_state,
     timezone,
@@ -17,6 +18,7 @@ INSERT INTO site (
 ) VALUES (
     sqlc.arg('org_id'),
     sqlc.arg('name'),
+    sqlc.arg('slug'),
     sqlc.narg('location_city'),
     sqlc.narg('location_state'),
     sqlc.narg('timezone'),
@@ -29,10 +31,24 @@ INSERT INTO site (
 )
 RETURNING *;
 
+-- name: ListSiteSlugs :many
+SELECT slug
+FROM site
+WHERE org_id = sqlc.arg('org_id')
+  AND deleted_at IS NULL
+ORDER BY slug;
+
 -- name: GetSite :one
 SELECT *
 FROM site
 WHERE id = sqlc.arg('id')
+  AND org_id = sqlc.arg('org_id')
+  AND deleted_at IS NULL;
+
+-- name: GetSiteBySlug :one
+SELECT *
+FROM site
+WHERE slug = sqlc.arg('slug')
   AND org_id = sqlc.arg('org_id')
   AND deleted_at IS NULL;
 
@@ -101,8 +117,13 @@ WHERE org_id = sqlc.arg('org_id')
   AND deleted_at IS NULL;
 
 -- name: UpdateSite :exec
+-- The slug is not user-editable but tracks the name: the service regenerates
+-- it on a rename and re-sends the unchanged slug otherwise. A slug
+-- unique-violation (uk_site_org_slug) maps to a collision sentinel so the
+-- service can retry with the next suffix, mirroring CreateSite.
 UPDATE site
 SET name              = sqlc.arg('name'),
+    slug              = sqlc.arg('slug'),
     location_city     = sqlc.narg('location_city'),
     location_state    = sqlc.narg('location_state'),
     timezone          = sqlc.narg('timezone'),

@@ -85,6 +85,7 @@ const createSite = `-- name: CreateSite :one
 INSERT INTO site (
     org_id,
     name,
+    slug,
     location_city,
     location_state,
     timezone,
@@ -104,15 +105,17 @@ INSERT INTO site (
     $7,
     $8,
     $9,
-    COALESCE($10::text, 'US'),
-    $11
+    $10,
+    COALESCE($11::text, 'US'),
+    $12
 )
-RETURNING id, org_id, name, location_city, location_state, power_capacity_mw, network_config, created_at, updated_at, deleted_at, address, postal_code, country, notes, timezone
+RETURNING id, org_id, name, location_city, location_state, power_capacity_mw, network_config, created_at, updated_at, deleted_at, address, postal_code, country, notes, timezone, slug
 `
 
 type CreateSiteParams struct {
 	OrgID           int64
 	Name            string
+	Slug            string
 	LocationCity    sql.NullString
 	LocationState   sql.NullString
 	Timezone        sql.NullString
@@ -131,6 +134,7 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (Site, e
 	row := q.queryRow(ctx, q.createSiteStmt, createSite,
 		arg.OrgID,
 		arg.Name,
+		arg.Slug,
 		arg.LocationCity,
 		arg.LocationState,
 		arg.Timezone,
@@ -158,6 +162,7 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (Site, e
 		&i.Country,
 		&i.Notes,
 		&i.Timezone,
+		&i.Slug,
 	)
 	return i, err
 }
@@ -299,7 +304,7 @@ func (q *Queries) FindDevicesInSiteLessRacks(ctx context.Context, arg FindDevice
 }
 
 const getSite = `-- name: GetSite :one
-SELECT id, org_id, name, location_city, location_state, power_capacity_mw, network_config, created_at, updated_at, deleted_at, address, postal_code, country, notes, timezone
+SELECT id, org_id, name, location_city, location_state, power_capacity_mw, network_config, created_at, updated_at, deleted_at, address, postal_code, country, notes, timezone, slug
 FROM site
 WHERE id = $1
   AND org_id = $2
@@ -330,6 +335,44 @@ func (q *Queries) GetSite(ctx context.Context, arg GetSiteParams) (Site, error) 
 		&i.Country,
 		&i.Notes,
 		&i.Timezone,
+		&i.Slug,
+	)
+	return i, err
+}
+
+const getSiteBySlug = `-- name: GetSiteBySlug :one
+SELECT id, org_id, name, location_city, location_state, power_capacity_mw, network_config, created_at, updated_at, deleted_at, address, postal_code, country, notes, timezone, slug
+FROM site
+WHERE slug = $1
+  AND org_id = $2
+  AND deleted_at IS NULL
+`
+
+type GetSiteBySlugParams struct {
+	Slug  string
+	OrgID int64
+}
+
+func (q *Queries) GetSiteBySlug(ctx context.Context, arg GetSiteBySlugParams) (Site, error) {
+	row := q.queryRow(ctx, q.getSiteBySlugStmt, getSiteBySlug, arg.Slug, arg.OrgID)
+	var i Site
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.LocationCity,
+		&i.LocationState,
+		&i.PowerCapacityMw,
+		&i.NetworkConfig,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Address,
+		&i.PostalCode,
+		&i.Country,
+		&i.Notes,
+		&i.Timezone,
+		&i.Slug,
 	)
 	return i, err
 }
@@ -419,9 +462,40 @@ func (q *Queries) ListSiteNetworkConfigsForOverlap(ctx context.Context, arg List
 	return items, nil
 }
 
+const listSiteSlugs = `-- name: ListSiteSlugs :many
+SELECT slug
+FROM site
+WHERE org_id = $1
+  AND deleted_at IS NULL
+ORDER BY slug
+`
+
+func (q *Queries) ListSiteSlugs(ctx context.Context, orgID int64) ([]string, error) {
+	rows, err := q.query(ctx, q.listSiteSlugsStmt, listSiteSlugs, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		items = append(items, slug)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSites = `-- name: ListSites :many
 SELECT
-    s.id, s.org_id, s.name, s.location_city, s.location_state, s.power_capacity_mw, s.network_config, s.created_at, s.updated_at, s.deleted_at, s.address, s.postal_code, s.country, s.notes, s.timezone,
+    s.id, s.org_id, s.name, s.location_city, s.location_state, s.power_capacity_mw, s.network_config, s.created_at, s.updated_at, s.deleted_at, s.address, s.postal_code, s.country, s.notes, s.timezone, s.slug,
     COALESCE(d.device_count, 0)::bigint AS device_count,
     COALESCE(b.building_count, 0)::bigint AS building_count,
     COALESCE(r.rack_count, 0)::bigint AS rack_count
@@ -472,6 +546,7 @@ type ListSitesRow struct {
 	Country         string
 	Notes           sql.NullString
 	Timezone        sql.NullString
+	Slug            string
 	DeviceCount     int64
 	BuildingCount   int64
 	RackCount       int64
@@ -504,6 +579,7 @@ func (q *Queries) ListSites(ctx context.Context, orgID int64) ([]ListSitesRow, e
 			&i.Country,
 			&i.Notes,
 			&i.Timezone,
+			&i.Slug,
 			&i.DeviceCount,
 			&i.BuildingCount,
 			&i.RackCount,
@@ -989,23 +1065,25 @@ func (q *Queries) UnassignRacksFromSite(ctx context.Context, arg UnassignRacksFr
 const updateSite = `-- name: UpdateSite :exec
 UPDATE site
 SET name              = $1,
-    location_city     = $2,
-    location_state    = $3,
-    timezone          = $4,
-    power_capacity_mw = $5,
-    network_config    = $6,
-    address           = $7,
-    postal_code       = $8,
-    country           = COALESCE($9::text, country),
-    notes             = $10,
+    slug              = $2,
+    location_city     = $3,
+    location_state    = $4,
+    timezone          = $5,
+    power_capacity_mw = $6,
+    network_config    = $7,
+    address           = $8,
+    postal_code       = $9,
+    country           = COALESCE($10::text, country),
+    notes             = $11,
     updated_at        = CURRENT_TIMESTAMP
-WHERE id = $11
-  AND org_id = $12
+WHERE id = $12
+  AND org_id = $13
   AND deleted_at IS NULL
 `
 
 type UpdateSiteParams struct {
 	Name            string
+	Slug            string
 	LocationCity    sql.NullString
 	LocationState   sql.NullString
 	Timezone        sql.NullString
@@ -1019,9 +1097,14 @@ type UpdateSiteParams struct {
 	OrgID           int64
 }
 
+// The slug is not user-editable but tracks the name: the service regenerates
+// it on a rename and re-sends the unchanged slug otherwise. A slug
+// unique-violation (uk_site_org_slug) maps to a collision sentinel so the
+// service can retry with the next suffix, mirroring CreateSite.
 func (q *Queries) UpdateSite(ctx context.Context, arg UpdateSiteParams) error {
 	_, err := q.exec(ctx, q.updateSiteStmt, updateSite,
 		arg.Name,
+		arg.Slug,
 		arg.LocationCity,
 		arg.LocationState,
 		arg.Timezone,

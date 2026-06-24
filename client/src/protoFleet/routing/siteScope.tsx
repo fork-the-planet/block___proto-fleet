@@ -1,11 +1,17 @@
 /* eslint-disable react-refresh/only-export-components -- route scope helpers colocated with tiny route layouts */
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { Navigate, Outlet, useParams } from "react-router-dom";
+import { Code } from "@connectrpc/connect";
 
+import { useSites } from "@/protoFleet/api/sites";
+import { DEFAULT_ACTIVE_SITE } from "@/protoFleet/store/types/activeSite";
 import type { ActiveSite } from "@/protoFleet/store/types/activeSite";
+import { useFleetStore } from "@/protoFleet/store/useFleetStore";
 
 const UNASSIGNED_SEGMENT = "unassigned";
-const SITE_ID_SEGMENT_RE = /^[1-9]\d*$/;
+const SLUG_RESOLUTION_RETRY_MS = 2000;
+const SITE_SLUG_SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const NUMERIC_SEGMENT_RE = /^[1-9]\d*$/;
 const SCOPABLE_ROOT_SEGMENTS = new Set(["dashboard", "fleet", "groups", "energy", "activity"]);
 
 const SiteScopeContext = createContext<ActiveSite | null>(null);
@@ -24,9 +30,74 @@ export const AllSitesScopeLayout = () => (
 
 export const SiteScopeLayout = () => {
   const { siteScope } = useParams();
-  const activeSite = activeSiteFromSegment(siteScope);
+  const { resolveSiteBySlug } = useSites();
+  const setActiveSite = useFleetStore((state) => state.ui.setActiveSite);
+  const [resolvedSite, setResolvedSite] = useState<{ slug: string; id: string } | undefined>(undefined);
+  const [failedSlug, setFailedSlug] = useState<string | undefined>(undefined);
+  const [erroredSlug, setErroredSlug] = useState<string | undefined>(undefined);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+
+  useEffect(() => {
+    if (siteScope === UNASSIGNED_SEGMENT || !isSiteSlugSegment(siteScope)) return;
+    const controller = new AbortController();
+    let retryTimer: number | undefined;
+    void resolveSiteBySlug({
+      slug: siteScope,
+      signal: controller.signal,
+      onSuccess: (site) => {
+        const id = (site.id ?? 0n).toString();
+        setResolvedSite(id === "0" ? undefined : { slug: siteScope, id });
+        setFailedSlug(undefined);
+        setErroredSlug(undefined);
+      },
+      onError: (_message, code) => {
+        if (code === Code.NotFound) {
+          setResolvedSite((current) => (current?.slug === siteScope ? undefined : current));
+          setFailedSlug(siteScope);
+          setErroredSlug(undefined);
+          return;
+        }
+        setErroredSlug(siteScope);
+        retryTimer = window.setTimeout(() => {
+          setRetryAttempt((attempt) => attempt + 1);
+        }, SLUG_RESOLUTION_RETRY_MS);
+      },
+    });
+    return () => {
+      controller.abort();
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer);
+      }
+    };
+  }, [resolveSiteBySlug, retryAttempt, siteScope]);
+
+  const slugToId = useMemo(() => {
+    if (!resolvedSite) return undefined;
+    return new Map([[resolvedSite.slug, resolvedSite.id]]);
+  }, [resolvedSite]);
+
+  const resolverErrored = isSiteSlugSegment(siteScope) && erroredSlug === siteScope;
+  const activeSite = activeSiteFromSegment(siteScope, slugToId);
+  const resolvingSlug =
+    isSiteSlugSegment(siteScope) &&
+    failedSlug !== siteScope &&
+    erroredSlug !== siteScope &&
+    resolvedSite?.slug !== siteScope;
+  const unknownSlug = isSiteSlugSegment(siteScope) && !activeSite && !resolvingSlug && !resolverErrored;
+
+  useEffect(() => {
+    if (unknownSlug) {
+      setActiveSite(DEFAULT_ACTIVE_SITE);
+    }
+  }, [setActiveSite, unknownSlug]);
 
   if (!activeSite) {
+    if (resolvingSlug) {
+      return null;
+    }
+    if (resolverErrored) {
+      return <Outlet />;
+    }
     return <Navigate to="/" replace />;
   }
 
@@ -37,9 +108,15 @@ export const SiteScopeLayout = () => {
   );
 };
 
-export const activeSiteFromSegment = (segment: string | undefined): ActiveSite | null => {
+export const activeSiteFromSegment = (
+  segment: string | undefined,
+  slugToId?: Map<string, string>,
+): ActiveSite | null => {
   if (segment === UNASSIGNED_SEGMENT) return { kind: "unassigned" };
-  if (segment && SITE_ID_SEGMENT_RE.test(segment)) return { kind: "site", id: segment };
+  if (isSiteSlugSegment(segment) && slugToId) {
+    const id = slugToId.get(segment);
+    if (id) return { kind: "site", id, slug: segment };
+  }
   return null;
 };
 
@@ -48,7 +125,7 @@ export const segmentFromActiveSite = (activeSite: ActiveSite): string | undefine
     case "all":
       return undefined;
     case "site":
-      return activeSite.id;
+      return activeSite.slug;
     case "unassigned":
       return UNASSIGNED_SEGMENT;
   }
@@ -58,7 +135,7 @@ export const isPathScopable = (pathname: string): boolean => {
   return isUnscopedScopablePath(unscopedScopablePath(pathname));
 };
 
-export const activeSiteFromScopablePath = (pathname: string): ActiveSite | null => {
+export const activeSiteFromScopablePath = (pathname: string, slugToId?: Map<string, string>): ActiveSite | null => {
   const normalized = normalizePathname(pathname);
   if (isUnscopedScopablePath(normalized)) {
     return { kind: "all" };
@@ -66,7 +143,7 @@ export const activeSiteFromScopablePath = (pathname: string): ActiveSite | null 
 
   const parts = normalized.split("/").filter(Boolean);
   if (parts.length >= 2 && isScopableParts(parts.slice(1))) {
-    return activeSiteFromSegment(parts[0]);
+    return activeSiteFromSegment(parts[0], slugToId);
   }
 
   return null;
@@ -79,11 +156,20 @@ export const unscopedScopablePath = (pathname: string): string => {
   }
 
   const parts = normalized.split("/").filter(Boolean);
-  if (parts.length >= 2 && activeSiteFromSegment(parts[0]) && isScopableParts(parts.slice(1))) {
+  if (parts.length >= 2 && isScopeSegment(parts[0]) && isScopableParts(parts.slice(1))) {
     return `/${parts.slice(1).join("/")}`;
   }
 
   return normalized;
+};
+
+const isSiteSlugSegment = (segment: string | undefined): segment is string => {
+  if (!segment) return false;
+  return !NUMERIC_SEGMENT_RE.test(segment) && SITE_SLUG_SEGMENT_RE.test(segment) && !segment.includes("--");
+};
+
+const isScopeSegment = (segment: string | undefined): boolean => {
+  return segment === UNASSIGNED_SEGMENT || isSiteSlugSegment(segment);
 };
 
 export const scopedPath = (to: string, activeSite: ActiveSite): string => {
