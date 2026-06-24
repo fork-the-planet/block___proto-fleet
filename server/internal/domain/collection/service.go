@@ -1742,6 +1742,25 @@ func (s *Service) SaveRack(ctx context.Context, req *pb.SaveRackRequest) (*pb.Sa
 			buildingChanged bool
 		)
 
+		// Canonical lock pre-pass, mirroring AssignDevicesToRack: lock the
+		// target plus every source rack the members currently sit in, in one
+		// ascending device_set.id order, BEFORE the per-path target lock and
+		// the replaceRackMembershipAndSlots deletes. This is what keeps the
+		// new RemoveDevicesFromAnyRack delete from deadlocking against a
+		// concurrent rack save moving devices the opposite way. targetRackID
+		// is 0 on the create path (the rack doesn't exist yet; it's created +
+		// locked below and sorts last by id). Guarded on a non-empty member
+		// set — an empty save removes members and touches no source racks.
+		if len(deviceIdentifiers) > 0 {
+			var lockTargetRackID int64
+			if req.CollectionId != nil {
+				lockTargetRackID = *req.CollectionId
+			}
+			if _, err := s.collectionStore.LockRacksForReparent(ctx, info.OrganizationID, deviceIdentifiers, lockTargetRackID); err != nil {
+				return nil, err
+			}
+		}
+
 		if isUpdate {
 			res, err := s.saveRackUpdate(ctx, info, req, rackInfo)
 			if err != nil {
@@ -2077,6 +2096,15 @@ func (s *Service) replaceRackMembershipAndSlots(ctx context.Context, orgID, coll
 	// lockstep; its IS-DISTINCT-FROM-guarded queries no-op the column that
 	// didn't change, so cascadeCount stays accurate.
 	if len(deviceIdentifiers) > 0 {
+		// Clear any prior rack membership for these devices (excluding this
+		// rack) before adding them, so a device seeded from another rack
+		// MOVES here instead of tripping idx_one_rack_per_device. Mirrors
+		// AssignDevicesToRack's move semantics within the same transaction —
+		// no orphan window. A no-op for the edit flow, which never sends
+		// devices already sitting in a different rack.
+		if _, err := s.collectionStore.RemoveDevicesFromAnyRack(ctx, orgID, deviceIdentifiers, collectionID); err != nil {
+			return out, err
+		}
 		if _, err := s.collectionStore.AddDevicesToCollection(ctx, orgID, collectionID, deviceIdentifiers); err != nil {
 			return out, err
 		}
