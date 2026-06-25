@@ -42,6 +42,9 @@ const (
 	maxPortsPerIP          = discoverylimits.MaxPortsPerIP
 	// Mirrors the proto cap so a verbose error doesn't fail buf-validate on the ack itself.
 	maxAckErrorMessageBytes = 4096
+	// Mirrors ControlAck.payload's proto cap; result-bearing commands must not
+	// make the ack itself invalid.
+	maxAckPayloadBytes = 1 << 20
 	// commandPoolSize bounds quick per-miner commands handled concurrently per
 	// session. Discovery does not draw from this pool; it has its own exclusive,
 	// single-flight slot (see runControlSession). Commands past the ceiling are
@@ -543,12 +546,28 @@ func (r *RunCmd) streamReports(ctx context.Context, client gatewayClient, comman
 }
 
 func (r *RunCmd) sendAck(stream acker, commandID string, code pb.AckCode, errMsg string, logger *slog.Logger) {
+	r.sendAckWithPayload(stream, commandID, code, errMsg, nil, logger)
+}
+
+func (r *RunCmd) sendAckWithPayload(stream acker, commandID string, code pb.AckCode, errMsg string, payload []byte, logger *slog.Logger) {
+	if len(payload) > maxAckPayloadBytes {
+		originalBytes := len(payload)
+		payload = nil
+		if code == pb.AckCode_ACK_CODE_OK {
+			code = pb.AckCode_ACK_CODE_INTERNAL
+			errMsg = fmt.Sprintf("ack payload too large: %d bytes exceeds %d byte limit", originalBytes, maxAckPayloadBytes)
+		} else if errMsg == "" {
+			errMsg = fmt.Sprintf("ack payload too large: %d bytes exceeds %d byte limit", originalBytes, maxAckPayloadBytes)
+		}
+		logger.Warn("dropping oversized ack payload", "command_id", commandID, "payload_bytes", originalBytes, "max_payload_bytes", maxAckPayloadBytes)
+	}
 	errMsg = truncateUTF8(errMsg, maxAckErrorMessageBytes)
 	if err := stream.Send(&pb.ControlStreamRequest{Kind: &pb.ControlStreamRequest_Ack{Ack: &pb.ControlAck{
 		CommandId:    commandID,
 		Succeeded:    code == pb.AckCode_ACK_CODE_OK,
 		ErrorMessage: errMsg,
 		Code:         code,
+		Payload:      payload,
 	}}}); err != nil {
 		logger.Warn("send ack failed", "command_id", commandID, "err", err)
 	}
