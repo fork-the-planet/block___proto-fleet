@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 
@@ -206,6 +206,54 @@ describe("useCurtailmentResponseProfiles", () => {
         siteName: "Site 101",
       }),
     });
+  });
+
+  it("uses loaded site names for site-scoped API profiles", async () => {
+    mockListCurtailmentResponseProfiles.mockResolvedValueOnce({ profiles: [apiProfile()] });
+    const siteNameById = new Map([["101", "Austin, TX"]]);
+
+    const { result } = renderHook(() => useCurtailmentResponseProfiles(false, { siteNameById }));
+
+    await act(async () => {
+      await result.current.listResponseProfiles();
+    });
+
+    expect(result.current.responseProfiles[0]).toMatchObject({
+      scope: "Austin, TX",
+      formValues: expect.objectContaining({
+        siteId: "101",
+        siteName: "Austin, TX",
+      }),
+    });
+  });
+
+  it("remaps loaded profiles when site names arrive without refetching profiles", async () => {
+    mockListCurtailmentResponseProfiles.mockResolvedValueOnce({ profiles: [apiProfile()] });
+
+    const { result, rerender } = renderHook(
+      ({ siteNameById }: { siteNameById?: Map<string, string> }) =>
+        useCurtailmentResponseProfiles(true, { siteNameById }),
+      {
+        initialProps: {
+          siteNameById: undefined as Map<string, string> | undefined,
+        },
+      },
+    );
+
+    await waitFor(() => expect(result.current.responseProfiles[0]?.scope).toBe("Site 101"));
+
+    rerender({
+      siteNameById: new Map([["101", "Austin, TX"]]),
+    });
+
+    expect(result.current.responseProfiles[0]).toMatchObject({
+      scope: "Austin, TX",
+      formValues: expect.objectContaining({
+        siteId: "101",
+        siteName: "Austin, TX",
+      }),
+    });
+    expect(mockListCurtailmentResponseProfiles).toHaveBeenCalledTimes(1);
   });
 
   it("treats default zero curtail batch intervals as unset without a batch size", async () => {
