@@ -28,6 +28,7 @@ const ComponentErrors = ({ icon, heading, errorCount, href, className }: Compone
       <div
         className={clsx(
           "flex h-12 w-12 justify-center rounded-lg",
+          // Only the error state is red; "No issues" / loading stays neutral.
           !isLoading && errorCount > 0
             ? "bg-intent-critical-fill text-text-contrast"
             : "bg-surface-5 text-text-primary-70 dark:bg-core-primary-5",
@@ -49,7 +50,8 @@ const ComponentErrors = ({ icon, heading, errorCount, href, className }: Compone
   const isClickable = href && errorCount && errorCount > 0;
 
   const baseClassName = clsx(
-    "flex items-center gap-3 rounded-xl bg-surface-base dark:bg-core-primary-5 p-4",
+    // Contrasting card surface, matching the rack grid cards.
+    "flex items-center gap-3 rounded-xl bg-surface-overlay p-4",
     isClickable && "hover:bg-core-primary-10",
     className,
   );
