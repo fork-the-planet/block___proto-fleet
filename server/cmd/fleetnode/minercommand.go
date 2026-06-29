@@ -7,11 +7,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"sync"
+	"syscall"
 	"time"
 
 	"buf.build/go/protovalidate"
+	"connectrpc.com/connect"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -32,10 +38,16 @@ import (
 	sdk "github.com/block/proto-fleet/server/sdk/v1"
 )
 
-// minerCommandTimeout bounds a single miner command. It must stay below the server's
-// WorkerExecutionTimeout (default 30s) minus ack slack, or a slow command can be
-// retried while the node still runs it (duplicate reboot/curtail). var so tests shrink it.
-var minerCommandTimeout = 25 * time.Second
+var (
+	// minerCommandTimeout bounds a short miner command. It must stay below the server's
+	// WorkerExecutionTimeout (default 30s) minus ack slack, or a slow command can be
+	// retried while the node still runs it (duplicate reboot/curtail). var so tests shrink it.
+	minerCommandTimeout = 25 * time.Second
+	// firmwareMinerCommandTimeout stays below the server-side firmware execution
+	// budget (default 15m) so fleetd has time to poll install status and reboot
+	// after the node finishes the artifact download and device upload.
+	firmwareMinerCommandTimeout = 10 * time.Minute
+)
 
 const (
 	supportedMiningPoolSlots       = 3
@@ -43,7 +55,16 @@ const (
 	maxGetErrorsReports            = 512
 	minerLogsArtifactFilename      = "miner-logs.csv"
 	commandArtifactChunkSize       = 1 << 20
+
+	firmwareArtifactTempDirName           = "firmware-artifacts"
+	firmwareArtifactTempDirPrefix         = "download-"
+	maxFleetNodeFirmwareArtifactSizeBytes = 500 * 1024 * 1024
+	maxConcurrentFirmwareDownloads        = 1
+	maxActiveFirmwareArtifactBytes        = maxFleetNodeFirmwareArtifactSizeBytes
+	minFirmwareTempFreeBytes              = 64 * 1024 * 1024
 )
+
+var firmwareDownloadCapacity = newFirmwareDownloadLimiter(maxConcurrentFirmwareDownloads, maxActiveFirmwareArtifactBytes)
 
 // driverGetter is the plugin-manager seam the executor needs; *plugins.Manager satisfies it.
 type driverGetter interface {
@@ -108,7 +129,7 @@ func (r *RunCmd) handleMinerCommand(ctx context.Context, client gatewayClient, s
 	}
 	bundle = passwordUpdate.secretBundle(target, bundle)
 
-	cmdCtx, cancel := context.WithTimeout(ctx, minerCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, minerCommandActionTimeout(mc))
 	defer cancel()
 
 	result, err := driver.NewDevice(cmdCtx, target.GetDeviceIdentifier(), sdk.DeviceInfo{
@@ -144,7 +165,7 @@ func (r *RunCmd) handleMinerCommand(ctx context.Context, client gatewayClient, s
 	if passwordUpdate != nil {
 		payload, err = passwordUpdate.run(cmdCtx, dev, bundle, r.minerSecrets)
 	} else {
-		payload, err = runMinerAction(cmdCtx, client, commandID, caps, dev, mc)
+		payload, err = runMinerAction(cmdCtx, client, commandID, r.firmwareTempRootForDownloads(), caps, dev, mc)
 	}
 	if err != nil {
 		code, msg := classifyMinerActionError("execute command", mc, err)
@@ -212,6 +233,13 @@ func (u *passwordUpdateCommand) run(ctx context.Context, dev sdk.Device, bundle 
 	return payload, nil
 }
 
+func minerCommandActionTimeout(mc *pb.MinerCommand) time.Duration {
+	if mc.GetFirmwareUpdate() != nil {
+		return firmwareMinerCommandTimeout
+	}
+	return minerCommandTimeout
+}
+
 // validateDialTarget rejects descriptors the node should never dial: a non-IP, public,
 // or link-local address, or a scheme the drivers can't dial. Loopback is allowed for the
 // dev virtual driver; mirrors the discovery path's private-address policy.
@@ -238,7 +266,14 @@ func commandCapabilities(ctx context.Context, driver sdk.Driver, mc *pb.MinerCom
 	return caps, err
 }
 
-func runMinerAction(ctx context.Context, client gatewayClient, commandID string, caps sdk.Capabilities, dev sdk.Device, mc *pb.MinerCommand) ([]byte, error) {
+func (r *RunCmd) firmwareTempRootForDownloads() string {
+	if r.firmwareTempRoot != "" {
+		return r.firmwareTempRoot
+	}
+	return filepath.Join(os.TempDir(), "proto-fleet-firmware")
+}
+
+func runMinerAction(ctx context.Context, client gatewayClient, commandID, firmwareTempRoot string, caps sdk.Capabilities, dev sdk.Device, mc *pb.MinerCommand) ([]byte, error) {
 	switch a := mc.GetAction().(type) {
 	case *pb.MinerCommand_Reboot:
 		return nil, dev.Reboot(ctx)
@@ -310,6 +345,10 @@ func runMinerAction(ctx context.Context, client gatewayClient, commandID string,
 			return nil, cmdErr(pb.AckCode_ACK_CODE_PARTIAL, "uploaded partial miner log data; retry after partial log pagination is supported")
 		}
 		return nil, nil
+	case *pb.MinerCommand_FirmwareUpdate:
+		return nil, runFirmwareUpdateAction(ctx, client, commandID, mc.GetTarget().GetDeviceIdentifier(), firmwareTempRoot, dev, a.FirmwareUpdate.GetArtifact())
+	case *pb.MinerCommand_GetFirmwareUpdateStatus:
+		return getFirmwareUpdateStatusResultPayload(ctx, dev)
 	default:
 		return nil, cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "unrecognized miner command action")
 	}
@@ -444,6 +483,241 @@ func updateMinerPasswordResultPayload(bundle sdk.SecretBundle, newPassword strin
 	return payload, nil
 }
 
+func runFirmwareUpdateAction(ctx context.Context, client gatewayClient, commandID, deviceIdentifier, firmwareTempRoot string, dev sdk.Device, ref *pb.CommandArtifactRef) error {
+	if ref == nil {
+		return cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact is required")
+	}
+	if ref.GetPurpose() != pb.CommandArtifactPurpose_COMMAND_ARTIFACT_PURPOSE_FIRMWARE_PAYLOAD {
+		return cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact has wrong purpose: %s", ref.GetPurpose())
+	}
+	if ref.GetSizeBytes() <= 0 {
+		return cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact size is required")
+	}
+	if ref.GetSizeBytes() > maxFleetNodeFirmwareArtifactSizeBytes {
+		return cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact size %d exceeds fleet node limit %d", ref.GetSizeBytes(), maxFleetNodeFirmwareArtifactSizeBytes)
+	}
+	if client == nil {
+		return cmdErr(pb.AckCode_ACK_CODE_AGENT_INCAPABLE, "fleet node gateway client is unavailable")
+	}
+	releaseDownload, ok := firmwareDownloadCapacity.acquire(ref.GetSizeBytes())
+	if !ok {
+		return cmdErr(pb.AckCode_ACK_CODE_BUSY, "firmware download capacity exhausted; retry shortly")
+	}
+	defer releaseDownload()
+
+	tmpPath, cleanup, err := downloadFirmwareArtifact(ctx, client, commandID, deviceIdentifier, firmwareTempRoot, ref)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	file, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("open downloaded firmware: %w", err)
+	}
+	defer file.Close()
+
+	return dev.FirmwareUpdate(ctx, sdk.FirmwareFile{
+		Reader:   file,
+		ID:       ref.GetArtifactId(),
+		Filename: ref.GetFilename(),
+		Size:     ref.GetSizeBytes(),
+		SHA256:   ref.GetSha256(),
+		FilePath: tmpPath,
+	})
+}
+
+type firmwareDownloadLimiter struct {
+	slots       chan struct{}
+	maxBytes    int64
+	mu          sync.Mutex
+	activeBytes int64
+}
+
+func newFirmwareDownloadLimiter(maxConcurrent int, maxBytes int64) *firmwareDownloadLimiter {
+	return &firmwareDownloadLimiter{
+		slots:    make(chan struct{}, maxConcurrent),
+		maxBytes: maxBytes,
+	}
+}
+
+func (l *firmwareDownloadLimiter) acquire(size int64) (func(), bool) {
+	select {
+	case l.slots <- struct{}{}:
+	default:
+		return nil, false
+	}
+
+	l.mu.Lock()
+	if l.activeBytes+size > l.maxBytes {
+		l.mu.Unlock()
+		<-l.slots
+		return nil, false
+	}
+	l.activeBytes += size
+	l.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.mu.Lock()
+			l.activeBytes -= size
+			l.mu.Unlock()
+			<-l.slots
+		})
+	}, true
+}
+
+func prepareFirmwareArtifactTempRoot(root string) error {
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("remove firmware temp dir: %w", err)
+	}
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return fmt.Errorf("create firmware temp dir: %w", err)
+	}
+	return nil
+}
+
+func ensureFirmwareTempSpace(root string, artifactSize int64) error {
+	freeBytes, err := firmwareTempFreeBytes(root)
+	if err != nil {
+		return fmt.Errorf("check firmware temp space: %w", err)
+	}
+	needed := artifactSize + minFirmwareTempFreeBytes
+	if freeBytes < needed {
+		return cmdErr(pb.AckCode_ACK_CODE_BUSY, "insufficient firmware temp space: need %d bytes, have %d bytes", needed, freeBytes)
+	}
+	return nil
+}
+
+func firmwareTempFreeBytes(root string) (int64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(root, &stat); err != nil {
+		return 0, fmt.Errorf("statfs firmware temp dir: %w", err)
+	}
+	if stat.Bsize <= 0 {
+		return 0, nil
+	}
+	blockSize := uint64(stat.Bsize) //nolint:gosec // Bsize is guarded above; Statfs reports a non-negative block size in practice.
+	availableBlocks := stat.Bavail
+	const maxInt64 = ^uint64(0) >> 1
+	if availableBlocks > ^uint64(0)/blockSize {
+		return int64(maxInt64), nil
+	}
+	free := availableBlocks * blockSize
+	if free > maxInt64 {
+		return int64(maxInt64), nil
+	}
+	return int64(free), nil
+}
+
+func downloadFirmwareArtifact(ctx context.Context, client gatewayClient, commandID, deviceIdentifier, firmwareTempRoot string, ref *pb.CommandArtifactRef) (string, func(), error) {
+	if firmwareTempRoot == "" {
+		firmwareTempRoot = filepath.Join(os.TempDir(), "proto-fleet-firmware")
+	}
+	if err := os.MkdirAll(firmwareTempRoot, 0700); err != nil {
+		return "", nil, fmt.Errorf("prepare firmware temp dir: %w", err)
+	}
+	if err := ensureFirmwareTempSpace(firmwareTempRoot, ref.GetSizeBytes()); err != nil {
+		return "", nil, err
+	}
+
+	stream, err := client.DownloadCommandArtifact(ctx, connect.NewRequest(&pb.DownloadCommandArtifactRequest{
+		CommandId:        commandID,
+		Artifact:         ref,
+		DeviceIdentifier: deviceIdentifier,
+	}))
+	if err != nil {
+		return "", nil, fmt.Errorf("download firmware artifact: %w", err)
+	}
+	defer stream.Close()
+	if !stream.Receive() {
+		return "", nil, commandArtifactStreamErr(stream, "receive firmware artifact header")
+	}
+	if got := stream.Msg().GetHeader(); got == nil || !commandArtifactRefsEqual(got.GetArtifact(), ref) {
+		return "", nil, cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact header does not match command")
+	}
+
+	tmpDir, err := os.MkdirTemp(firmwareTempRoot, firmwareArtifactTempDirPrefix)
+	if err != nil {
+		return "", nil, fmt.Errorf("create firmware temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+	filename := filepath.Base(ref.GetFilename())
+	if filename == "" || filename == "." || filename == string(filepath.Separator) {
+		filename = "firmware.bin"
+	}
+	tmpPath := filepath.Join(tmpDir, filename)
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("create firmware temp file: %w", err)
+	}
+	fail := func(err error) (string, func(), error) {
+		_ = file.Close()
+		cleanup()
+		return "", nil, err
+	}
+
+	hasher := sha256.New()
+	var written int64
+	for stream.Receive() {
+		chunk := stream.Msg().GetChunk()
+		if chunk == nil {
+			return fail(cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact stream contained non-chunk message after header"))
+		}
+		data := chunk.GetData()
+		if len(data) == 0 {
+			return fail(cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact chunk is empty"))
+		}
+		n, err := file.Write(data)
+		if err != nil {
+			return fail(fmt.Errorf("write firmware temp file: %w", err))
+		}
+		if n != len(data) {
+			return fail(io.ErrShortWrite)
+		}
+		if _, err := hasher.Write(data); err != nil {
+			return fail(fmt.Errorf("hash firmware chunk: %w", err))
+		}
+		written += int64(len(data))
+		if written > ref.GetSizeBytes() {
+			return fail(cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact is larger than declared"))
+		}
+	}
+	if err := commandArtifactStreamErr(stream, "receive firmware artifact chunk"); err != nil && !errors.Is(err, io.EOF) {
+		return fail(err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close firmware temp file: %w", err)
+	}
+	if written != ref.GetSizeBytes() {
+		cleanup()
+		return "", nil, cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact size mismatch: declared %d bytes, received %d bytes", ref.GetSizeBytes(), written)
+	}
+	if actual := hex.EncodeToString(hasher.Sum(nil)); actual != ref.GetSha256() {
+		cleanup()
+		return "", nil, cmdErr(pb.AckCode_ACK_CODE_BAD_REQUEST, "firmware artifact sha256 mismatch")
+	}
+	return tmpPath, cleanup, nil
+}
+
+func commandArtifactStreamErr(stream *connect.ServerStreamForClient[pb.DownloadCommandArtifactResponse], stage string) error {
+	if err := stream.Err(); err != nil {
+		return fmt.Errorf("%s: %w", stage, err)
+	}
+	return io.EOF
+}
+
+func commandArtifactRefsEqual(a, b *pb.CommandArtifactRef) bool {
+	return a.GetArtifactId() == b.GetArtifactId() &&
+		a.GetPurpose() == b.GetPurpose() &&
+		a.GetFilename() == b.GetFilename() &&
+		a.GetSizeBytes() == b.GetSizeBytes() &&
+		a.GetSha256() == b.GetSha256()
+}
+
 func toSDKMiningPoolConfigs(pools []*pb.MiningPoolConfig) []sdk.MiningPoolConfig {
 	sdkPools := make([]sdk.MiningPoolConfig, 0, len(pools))
 	for _, pool := range pools {
@@ -478,6 +752,51 @@ func validateGetMiningPoolsResult(result *pb.GetMiningPoolsResult) error {
 		}
 	}
 	return nil
+}
+
+func getFirmwareUpdateStatusResultPayload(ctx context.Context, dev sdk.Device) ([]byte, error) {
+	provider, ok := dev.(sdk.FirmwareUpdateStatusProvider)
+	if !ok {
+		return nil, nil
+	}
+	status, err := provider.GetFirmwareUpdateStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if status == nil {
+		return nil, nil
+	}
+	result, err := firmwareUpdateStatusResultFromSDK(status)
+	if err != nil {
+		return nil, err
+	}
+	if err := protovalidate.Validate(result); err != nil {
+		return nil, fmt.Errorf("invalid firmware update status result: %w", err)
+	}
+	payload, err := proto.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal firmware update status result: %w", err)
+	}
+	return payload, nil
+}
+
+func firmwareUpdateStatusResultFromSDK(status *sdk.FirmwareUpdateStatus) (*pb.FirmwareUpdateStatusResult, error) {
+	result := &pb.FirmwareUpdateStatusResult{
+		State: status.State,
+		Error: status.Error,
+	}
+	if status.Progress != nil {
+		const (
+			minInt32 = -1 << 31
+			maxInt32 = 1<<31 - 1
+		)
+		if *status.Progress < minInt32 || *status.Progress > maxInt32 {
+			return nil, fmt.Errorf("firmware update progress %d is outside int32 range", *status.Progress)
+		}
+		progress := int32(*status.Progress)
+		result.Progress = &progress
+	}
+	return result, nil
 }
 
 func miningPoolConfigsFromSDK(pools []sdk.ConfiguredPool) []*pb.MiningPoolConfig {

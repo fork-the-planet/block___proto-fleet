@@ -96,11 +96,16 @@ type Miner struct {
 }
 
 var _ interfaces.Miner = (*Miner)(nil)
+var _ interfaces.FirmwareUpdateStatusProvider = (*Miner)(nil)
 
 // Keep the remote diagnostics wait aligned with the cloud command worker budget
 // and above the fleet node's minerCommandTimeout, while still bounding callers
 // such as telemetry error polling that use a long-lived worker context.
 var remoteGetErrorsCommandTimeout = 30 * time.Second
+
+// Keep each firmware install-status poll short so a hung node/plugin can't hold
+// the per-node command gate for the full firmware update worker budget.
+var remoteFirmwareStatusCommandTimeout = 30 * time.Second
 
 const maxErrorColumnStringLen = 255
 
@@ -197,6 +202,19 @@ func (m *Miner) dispatch(ctx context.Context, mc *gatewaypb.MinerCommand) error 
 	return ackToError(ack)
 }
 
+func (m *Miner) dispatchWithArtifacts(ctx context.Context, mc *gatewaypb.MinerCommand, artifacts []control.ArtifactExpectation) error {
+	release, err := m.acquireGate(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	ack, _, err := m.sendWithoutGateWithArtifactResults(ctx, mc, artifacts)
+	if err != nil {
+		return err
+	}
+	return ackToError(ack)
+}
+
 func (m *Miner) send(ctx context.Context, mc *gatewaypb.MinerCommand) (*gatewaypb.ControlAck, error) {
 	release, err := m.acquireGate(ctx)
 	if err != nil {
@@ -204,6 +222,23 @@ func (m *Miner) send(ctx context.Context, mc *gatewaypb.MinerCommand) (*gatewayp
 	}
 	defer release()
 	return m.sendWithoutGate(ctx, mc)
+}
+
+func (m *Miner) sendWithCommandTimeout(ctx context.Context, timeout time.Duration, mc *gatewaypb.MinerCommand) (*gatewaypb.ControlAck, error) {
+	release, err := m.acquireGate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ack, err := m.sendWithoutGate(commandCtx, mc)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil, fleeterror.NewConnectionError(m.desc.GetDeviceIdentifier(), err)
+	}
+	return ack, err
 }
 
 func (m *Miner) acquireGate(ctx context.Context) (func(), error) {
@@ -470,8 +505,70 @@ func logDownloadRejectedError(ack *gatewaypb.ControlAck) error {
 	return fleeterror.NewFailedPreconditionErrorf("fleet node rejected miner log download: %s", reason)
 }
 
-func (m *Miner) FirmwareUpdate(_ context.Context, _ sdk.FirmwareFile) error {
-	return errUnsupported("FirmwareUpdate")
+func (m *Miner) FirmwareUpdate(ctx context.Context, firmware sdk.FirmwareFile) error {
+	if firmware.ID == "" {
+		return fleeterror.NewInternalError("firmware file ID is required for fleet-node firmware update")
+	}
+	if firmware.Filename == "" {
+		return fleeterror.NewInternalError("firmware filename is required for fleet-node firmware update")
+	}
+	if firmware.Size <= 0 {
+		return fleeterror.NewInternalError("firmware size is required for fleet-node firmware update")
+	}
+	if firmware.SHA256 == "" {
+		return fleeterror.NewInternalError("firmware sha256 is required for fleet-node firmware update")
+	}
+	ref := &gatewaypb.CommandArtifactRef{
+		ArtifactId: firmware.ID,
+		Purpose:    gatewaypb.CommandArtifactPurpose_COMMAND_ARTIFACT_PURPOSE_FIRMWARE_PAYLOAD,
+		Filename:   firmware.Filename,
+		SizeBytes:  firmware.Size,
+		Sha256:     firmware.SHA256,
+	}
+	expectation := control.ArtifactExpectation{
+		Direction:        control.ArtifactDirectionDownload,
+		Purpose:          ref.GetPurpose(),
+		ArtifactID:       ref.GetArtifactId(),
+		DeviceIdentifier: m.desc.GetDeviceIdentifier(),
+	}
+	return m.dispatchWithArtifacts(ctx, &gatewaypb.MinerCommand{Action: &gatewaypb.MinerCommand_FirmwareUpdate{
+		FirmwareUpdate: &gatewaypb.FirmwareUpdateAction{Artifact: ref},
+	}}, []control.ArtifactExpectation{expectation})
+}
+
+func (m *Miner) GetFirmwareUpdateStatus(ctx context.Context) (*sdk.FirmwareUpdateStatus, error) {
+	ack, err := m.sendWithCommandTimeout(ctx, remoteFirmwareStatusCommandTimeout, &gatewaypb.MinerCommand{Action: &gatewaypb.MinerCommand_GetFirmwareUpdateStatus{
+		GetFirmwareUpdateStatus: &gatewaypb.GetFirmwareUpdateStatusAction{},
+	}})
+	if err != nil {
+		return nil, err
+	}
+	if err := ackToError(ack); err != nil {
+		return nil, err
+	}
+	if len(ack.GetPayload()) == 0 {
+		return nil, nil
+	}
+
+	var result gatewaypb.FirmwareUpdateStatusResult
+	if err := proto.Unmarshal(ack.GetPayload(), &result); err != nil {
+		return nil, fleeterror.NewInternalErrorf("unmarshal firmware update status result: %v", err)
+	}
+	if err := protovalidate.Validate(&result); err != nil {
+		return nil, fleeterror.NewInternalErrorf("invalid firmware update status result: %v", err)
+	}
+	if result.GetState() == "" {
+		return nil, nil
+	}
+	status := &sdk.FirmwareUpdateStatus{
+		State: result.GetState(),
+		Error: result.Error,
+	}
+	if result.Progress != nil {
+		progress := int(result.GetProgress())
+		status.Progress = &progress
+	}
+	return status, nil
 }
 
 func (m *Miner) Unpair(_ context.Context) error {
@@ -487,22 +584,10 @@ func (m *Miner) GetDeviceStatus(_ context.Context) (minermodels.MinerStatus, err
 }
 
 func (m *Miner) GetErrors(ctx context.Context) (models.DeviceErrors, error) {
-	release, err := m.acquireGate(ctx)
-	if err != nil {
-		return models.DeviceErrors{}, err
-	}
-	defer release()
-
-	commandCtx, cancel := context.WithTimeout(ctx, remoteGetErrorsCommandTimeout)
-	defer cancel()
-
-	ack, err := m.sendWithoutGate(commandCtx, &gatewaypb.MinerCommand{Action: &gatewaypb.MinerCommand_GetErrors{
+	ack, err := m.sendWithCommandTimeout(ctx, remoteGetErrorsCommandTimeout, &gatewaypb.MinerCommand{Action: &gatewaypb.MinerCommand_GetErrors{
 		GetErrors: &gatewaypb.GetErrorsAction{},
 	}})
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return models.DeviceErrors{}, fleeterror.NewConnectionError(m.desc.GetDeviceIdentifier(), err)
-		}
 		return models.DeviceErrors{}, err
 	}
 	if err := ackToError(ack); err != nil {

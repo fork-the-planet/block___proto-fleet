@@ -392,6 +392,93 @@ func TestMiner_GetMiningPools_DecodesPayload(t *testing.T) {
 	assert.NotNil(t, decodeSent(t, s).GetGetMiningPools())
 }
 
+func TestMiner_FirmwareUpdate_SendsArtifactCommand(t *testing.T) {
+	s := &fakeSender{ack: &gatewaypb.ControlAck{Succeeded: true, Code: gatewaypb.AckCode_ACK_CODE_OK}}
+	m := newTestMiner(t, s)
+
+	err := m.FirmwareUpdate(context.Background(), sdk.FirmwareFile{
+		ID:       "11111111-1111-1111-1111-111111111111",
+		Filename: "update.swu",
+		Size:     42,
+		SHA256:   strings.Repeat("a", 64),
+	})
+
+	require.NoError(t, err)
+	mc := decodeSent(t, s)
+	ref := mc.GetFirmwareUpdate().GetArtifact()
+	require.NotNil(t, ref)
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111", ref.GetArtifactId())
+	assert.Equal(t, gatewaypb.CommandArtifactPurpose_COMMAND_ARTIFACT_PURPOSE_FIRMWARE_PAYLOAD, ref.GetPurpose())
+	assert.Equal(t, "update.swu", ref.GetFilename())
+	assert.Equal(t, int64(42), ref.GetSizeBytes())
+	assert.Equal(t, strings.Repeat("a", 64), ref.GetSha256())
+	require.Len(t, s.artifacts, 1)
+	assert.Equal(t, control.ArtifactDirectionDownload, s.artifacts[0].Direction)
+	assert.Equal(t, ref.GetPurpose(), s.artifacts[0].Purpose)
+	assert.Equal(t, ref.GetArtifactId(), s.artifacts[0].ArtifactID)
+	assert.Equal(t, "dev-1", s.artifacts[0].DeviceIdentifier)
+}
+
+func TestMiner_GetFirmwareUpdateStatus_DecodesPayload(t *testing.T) {
+	progress := int32(72)
+	errMsg := "installing"
+	payload, err := proto.Marshal(&gatewaypb.FirmwareUpdateStatusResult{
+		State:    "installing",
+		Progress: &progress,
+		Error:    &errMsg,
+	})
+	require.NoError(t, err)
+	s := &fakeSender{ack: &gatewaypb.ControlAck{
+		Succeeded: true,
+		Code:      gatewaypb.AckCode_ACK_CODE_OK,
+		Payload:   payload,
+	}}
+	m := newTestMiner(t, s)
+
+	status, err := m.GetFirmwareUpdateStatus(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.Equal(t, "installing", status.State)
+	require.NotNil(t, status.Progress)
+	assert.Equal(t, 72, *status.Progress)
+	require.NotNil(t, status.Error)
+	assert.Equal(t, errMsg, *status.Error)
+	assert.NotNil(t, decodeSent(t, s).GetGetFirmwareUpdateStatus())
+}
+
+func TestMiner_GetFirmwareUpdateStatus_EmptyPayloadReturnsNilStatus(t *testing.T) {
+	s := okSender()
+	m := newTestMiner(t, s)
+
+	status, err := m.GetFirmwareUpdateStatus(context.Background())
+
+	require.NoError(t, err)
+	assert.Nil(t, status)
+	assert.NotNil(t, decodeSent(t, s).GetGetFirmwareUpdateStatus())
+}
+
+func TestMiner_GetFirmwareUpdateStatus_UsesBoundedCommandContext(t *testing.T) {
+	oldTimeout := remoteFirmwareStatusCommandTimeout
+	remoteFirmwareStatusCommandTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { remoteFirmwareStatusCommandTimeout = oldTimeout })
+	s := &blockingSender{started: make(chan struct{})}
+	m := newTestMiner(t, s)
+
+	startedAt := time.Now()
+	_, err := m.GetFirmwareUpdateStatus(context.Background())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.True(t, fleeterror.IsConnectionError(err), "expected connection error, got %v", err)
+	assert.Less(t, time.Since(startedAt), time.Second)
+	select {
+	case <-s.started:
+	default:
+		t.Fatal("SendCommand was not called")
+	}
+}
+
 func TestMiner_GetErrors_DecodesPayload(t *testing.T) {
 	// Arrange
 	now := time.Now().UTC().Truncate(time.Millisecond)
