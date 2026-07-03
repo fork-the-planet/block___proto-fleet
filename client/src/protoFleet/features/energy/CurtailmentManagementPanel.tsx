@@ -219,7 +219,8 @@ function createResponseProfileFormValuesFromProfile(profile: ResponseProfile): R
       : "",
     restoreIntervalSec: "",
     responseDeadlineMinutes,
-    includeMaintenance: true,
+    includeMaintenance: false,
+    forceIncludeAllPairedMiners: false,
   };
 }
 
@@ -277,6 +278,7 @@ function createCurtailmentResponseProfileOption(profile: ResponseProfile): Curta
       restoreBatchSize,
       restoreIntervalSec: values.restoreIntervalSec,
       includeMaintenance: values.includeMaintenance,
+      forceIncludeAllPairedMiners: values.actionType === "fullFleet" && Boolean(values.forceIncludeAllPairedMiners),
     },
   };
 }

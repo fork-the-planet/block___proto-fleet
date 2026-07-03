@@ -173,7 +173,12 @@ const emptyResponseProfileFormValues: ResponseProfileFormValues = {
   restoreBatchSize: "",
   restoreIntervalSec: "",
   responseDeadlineMinutes: "15",
-  includeMaintenance: true,
+  // Maintenance-flagged miners are excluded by default: force_include_maintenance
+  // is admin-gated server-side, so defaulting it on would block non-admin
+  // operators with curtailment:manage from saving any profile. "Target all
+  // paired miners" opts the maintenance population in (admin-gated anyway).
+  includeMaintenance: false,
+  forceIncludeAllPairedMiners: false,
 };
 
 const sourceInputIds = {
@@ -450,6 +455,7 @@ function createResponseProfileFormValuesFromProfile(profile: ResponseProfile): R
     responseDeadlineMinutes:
       profile.deadlineSummary.match(/(\d+)/)?.[1] ?? emptyResponseProfileFormValues.responseDeadlineMinutes,
     includeMaintenance: emptyResponseProfileFormValues.includeMaintenance,
+    forceIncludeAllPairedMiners: emptyResponseProfileFormValues.forceIncludeAllPairedMiners,
   };
 }
 
@@ -509,6 +515,7 @@ function createCurtailmentFormValuesFromResponseProfile(
     restoreIntervalSec: values.restoreIntervalSec,
     reason: values.name,
     includeMaintenance: values.includeMaintenance,
+    forceIncludeAllPairedMiners: values.actionType === "fullFleet" && Boolean(values.forceIncludeAllPairedMiners),
   };
 }
 
@@ -567,6 +574,7 @@ function createResponseProfileFormValuesFromCurtailmentValues(
     restoreIntervalSec: values.restoreIntervalSec,
     responseDeadlineMinutes: secondsToDeadlineMinutes(values.maxDurationSec),
     includeMaintenance: values.includeMaintenance,
+    forceIncludeAllPairedMiners: values.curtailmentMode === "fullFleet" && Boolean(values.forceIncludeAllPairedMiners),
   };
 }
 

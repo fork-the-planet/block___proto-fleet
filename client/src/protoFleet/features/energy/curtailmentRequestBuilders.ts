@@ -36,6 +36,7 @@ type CurtailmentRequestFields = Pick<
   | "modeParams"
   | "includeMaintenance"
   | "forceIncludeMaintenance"
+  | "forceIncludeAllPairedMiners"
 >;
 
 const maxDurationOptions: OptionalUint32FieldOptions = {
@@ -232,6 +233,43 @@ export function buildCurtailmentScopes(values: CurtailmentScopeValues): Curtailm
   return [create(CurtailmentScopeSchema, { scope: { case: "wholeOrg", value: create(ScopeWholeOrgSchema, {}) } })];
 }
 
+// All-paired targeting requires a closed-loop scope (whole org or sites).
+// The policy's durable-ownership loop (release on unpair, reopen on re-pair)
+// does not run for explicit miner selections, and the server rejects the
+// combination.
+export function supportsAllPairedTargeting(
+  values: CurtailmentScopeValues & Pick<CurtailmentSubmitValues, "curtailmentMode">,
+): boolean {
+  if (values.curtailmentMode !== "fullFleet") {
+    return false;
+  }
+  const scopes = buildCurtailmentScopes(values);
+  return scopes !== undefined && scopes.every((s) => s.scope.case === "wholeOrg" || s.scope.case === "site");
+}
+
+// Targeting all paired miners also opts in miners flagged for maintenance:
+// parking them as unavailable would contradict the operator's explicit
+// "all paired" choice, and both flags sit behind the same server-side admin
+// gate as the all-paired control itself.
+//
+// The maintenance pair derives SOLELY from the all-paired flag: the UI no
+// longer exposes an independent maintenance toggle, so a stale
+// values.includeMaintenance (hydrated from a profile or past event saved when
+// the pair was coupled) must not survive unchecking "Target all paired
+// miners" — it would silently keep the admin-gated maintenance inclusion with
+// nothing in the UI showing it.
+export function buildForceInclusionFields(
+  values: CurtailmentScopeValues & Pick<CurtailmentSubmitValues, "curtailmentMode" | "forceIncludeAllPairedMiners">,
+): Pick<CurtailmentRequestFields, "includeMaintenance" | "forceIncludeMaintenance" | "forceIncludeAllPairedMiners"> {
+  const forceIncludeAllPairedMiners = values.forceIncludeAllPairedMiners && supportsAllPairedTargeting(values);
+  // The proto validator requires include_maintenance == force_include_maintenance.
+  return {
+    includeMaintenance: forceIncludeAllPairedMiners,
+    forceIncludeMaintenance: forceIncludeAllPairedMiners,
+    forceIncludeAllPairedMiners,
+  };
+}
+
 function buildCurtailmentRequestFields(values: CurtailmentSubmitValues): CurtailmentRequestFields {
   const scopes = buildCurtailmentScopes(values);
   if (scopes === undefined) {
@@ -258,8 +296,7 @@ function buildCurtailmentRequestFields(values: CurtailmentSubmitValues): Curtail
     strategy: ProtoCurtailmentStrategy.UNSPECIFIED,
     level: ProtoCurtailmentLevel.FULL,
     priority: getPriority(values.priority),
-    includeMaintenance: values.includeMaintenance,
-    forceIncludeMaintenance: values.includeMaintenance,
+    ...buildForceInclusionFields(values),
   };
 }
 

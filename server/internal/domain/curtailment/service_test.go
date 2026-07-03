@@ -291,6 +291,8 @@ func (f *fakeStore) GetTargetRollupByEvent(_ context.Context, _ int64, eventUUID
 			rollup.Confirmed++
 		case models.TargetStateDrifted:
 			rollup.Drifted++
+		case models.TargetStateUnavailable:
+			rollup.Unavailable++
 		case models.TargetStateResolved:
 			rollup.Resolved++
 		case models.TargetStateReleased:
@@ -570,6 +572,23 @@ func (f *fakeStore) ClaimClosedLoopFullFleetTargets(
 	panic("ClaimClosedLoopFullFleetTargets not exercised")
 }
 
+func (f *fakeStore) ClaimAllPairedPolicyTargets(
+	context.Context,
+	int64,
+	[]models.InsertTargetParams,
+) (int64, error) {
+	panic("ClaimAllPairedPolicyTargets not exercised")
+}
+
+func (f *fakeStore) BulkRefreshAllPairedTargetReadiness(
+	context.Context,
+	int64,
+	models.EventState,
+	[]interfaces.AllPairedReadinessUpdate,
+) ([]string, error) {
+	panic("BulkRefreshAllPairedTargetReadiness not exercised")
+}
+
 // --- helpers ---
 
 func miner(id string, status, pairing string, powerW, hashRateHS float64) *models.Candidate {
@@ -622,14 +641,15 @@ func defaultOrgConfig(orgID int64) *models.OrgConfig {
 var _ Metrics = (*recordingMetrics)(nil)
 
 type recordingMetrics struct {
-	mu                  sync.Mutex
-	tickDurations       []time.Duration
-	tickFailures        int
-	candidateExcluded   map[string]int
-	maintenance         int
-	eventStateRaces     int
-	targetWriteFailures int
-	auditWriteFailures  map[string]int
+	mu                     sync.Mutex
+	tickDurations          []time.Duration
+	tickFailures           int
+	candidateExcluded      map[string]int
+	maintenance            int
+	eventStateRaces        int
+	targetWriteFailures    int
+	auditWriteFailures     map[string]int
+	allPairedPendingStalls int
 }
 
 func newRecordingMetrics() *recordingMetrics {
@@ -673,6 +693,12 @@ func (m *recordingMetrics) IncTargetWriteFailure() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.targetWriteFailures++
+}
+
+func (m *recordingMetrics) IncAllPairedPendingStall() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.allPairedPendingStalls++
 }
 
 func (m *recordingMetrics) IncAuditWriteFailure(activityType string) {

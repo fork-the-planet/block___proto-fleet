@@ -201,6 +201,7 @@ function mapApiResponseProfile(profile: ApiCurtailmentResponseProfile, siteNameB
     restoreIntervalSec: numberToNonNegativeInputValue(profile.restoreBatchIntervalSec),
     responseDeadlineMinutes,
     includeMaintenance: profile.includeMaintenance,
+    forceIncludeAllPairedMiners: profile.forceIncludeAllPairedMiners,
   };
   const mergedFormValues = cachedFormValues
     ? {
@@ -426,9 +427,25 @@ function getResponseProfileScopes(values: ResponseProfileFormValues): Curtailmen
 }
 
 function buildResponseProfilePayload(values: ResponseProfileFormValues) {
+  const scopes = getResponseProfileScopes(values);
+  // All-paired targeting requires a closed-loop scope (whole org or sites);
+  // the server rejects explicit-miner scopes. Enabling it also opts in
+  // maintenance-flagged miners, mirroring the Start request builders. The
+  // proto validator requires include_maintenance == force_include_maintenance.
+  //
+  // The maintenance pair derives SOLELY from the all-paired flag: the form
+  // hydrates includeMaintenance from previously saved profiles (where the
+  // coupling wrote it as true), and with the maintenance toggle gone from the
+  // UI, unchecking "Target all paired miners" must also drop the admin-gated
+  // maintenance inclusion instead of silently carrying it forward.
+  const forceIncludeAllPairedMiners =
+    values.actionType === "fullFleet" &&
+    Boolean(values.forceIncludeAllPairedMiners) &&
+    (scopes?.every((scope) => scope.scope.case === "wholeOrg" || scope.scope.case === "site") ?? false);
+  const includeMaintenance = forceIncludeAllPairedMiners;
   return {
     profileName: values.name.trim(),
-    scopes: getResponseProfileScopes(values),
+    scopes,
     mode: values.actionType === "fixedKwReduction" ? CurtailmentMode.FIXED_KW : CurtailmentMode.FULL_FLEET,
     strategy: CurtailmentStrategy.LEAST_EFFICIENT_FIRST,
     level: CurtailmentLevel.FULL,
@@ -438,8 +455,9 @@ function buildResponseProfilePayload(values: ResponseProfileFormValues) {
     curtailBatchIntervalSec: getOptionalNonNegativeNumber(values.curtailBatchIntervalSec),
     restoreBatchSize: getRestoreBatchSize(values),
     restoreBatchIntervalSec: getRestoreBatchIntervalSec(values),
-    includeMaintenance: values.includeMaintenance,
-    forceIncludeMaintenance: values.includeMaintenance,
+    includeMaintenance,
+    forceIncludeMaintenance: includeMaintenance,
+    forceIncludeAllPairedMiners,
   };
 }
 

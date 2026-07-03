@@ -66,6 +66,7 @@ const fixedKwFormValues: ResponseProfileFormValues = {
   restoreIntervalSec: "0",
   responseDeadlineMinutes: "15",
   includeMaintenance: false,
+  forceIncludeAllPairedMiners: false,
 };
 
 function apiProfile(overrides: Partial<CurtailmentResponseProfile> = {}): CurtailmentResponseProfile {
@@ -171,6 +172,101 @@ describe("useCurtailmentResponseProfiles", () => {
       }),
     );
     expectWholeOrgScope(mockUpdateCurtailmentResponseProfile.mock.calls[0]?.[0]?.scopes);
+  });
+
+  it("sends all-paired targeting only for full-fleet response profiles", async () => {
+    mockCreateCurtailmentResponseProfile.mockResolvedValue({ profile: apiProfile({ site: undefined }) });
+    const { result } = renderHook(() => useCurtailmentResponseProfiles(false));
+
+    await act(async () => {
+      await result.current.createResponseProfile({
+        ...fixedKwFormValues,
+        actionType: "fullFleet",
+        forceIncludeAllPairedMiners: true,
+      });
+    });
+
+    // All-paired targeting also opts in maintenance-flagged miners,
+    // mirroring the Start request builders.
+    expect(mockCreateCurtailmentResponseProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mode: CurtailmentMode.FULL_FLEET,
+        forceIncludeAllPairedMiners: true,
+        includeMaintenance: true,
+        forceIncludeMaintenance: true,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.createResponseProfile({
+        ...fixedKwFormValues,
+        forceIncludeAllPairedMiners: true,
+      });
+    });
+
+    expect(mockCreateCurtailmentResponseProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mode: CurtailmentMode.FIXED_KW,
+        forceIncludeAllPairedMiners: false,
+        includeMaintenance: false,
+        forceIncludeMaintenance: false,
+      }),
+    );
+  });
+
+  it("strips all-paired targeting from miner-scoped response profiles", async () => {
+    mockCreateCurtailmentResponseProfile.mockResolvedValue({ profile: apiProfile({ site: undefined }) });
+    const { result } = renderHook(() => useCurtailmentResponseProfiles(false));
+
+    await act(async () => {
+      await result.current.createResponseProfile({
+        ...fixedKwFormValues,
+        actionType: "fullFleet",
+        deviceIdentifiers: ["miner-1"],
+        forceIncludeAllPairedMiners: true,
+      });
+    });
+
+    // Explicit-miner scopes are open loop; the server rejects the all-paired
+    // flag there, so the payload builder must not send it.
+    expect(mockCreateCurtailmentResponseProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mode: CurtailmentMode.FULL_FLEET,
+        forceIncludeAllPairedMiners: false,
+        includeMaintenance: false,
+        forceIncludeMaintenance: false,
+      }),
+    );
+  });
+
+  it("drops stale maintenance inclusion when all-paired targeting is unchecked", async () => {
+    mockUpdateCurtailmentResponseProfile.mockResolvedValue({
+      profile: apiProfile({ profileName: "Formerly all-paired", site: undefined }),
+    });
+    const { result } = renderHook(() => useCurtailmentResponseProfiles(false));
+
+    // A profile previously saved with all-paired enabled hydrates
+    // includeMaintenance: true into the edit form. Unchecking "Target all
+    // paired miners" must clear the admin-gated maintenance pair on save —
+    // the maintenance toggle no longer exists in the UI, so nothing else can.
+    await act(async () => {
+      await result.current.updateResponseProfile("7", {
+        ...fixedKwFormValues,
+        name: "Formerly all-paired",
+        actionType: "fullFleet",
+        includeMaintenance: true,
+        forceIncludeAllPairedMiners: false,
+      });
+    });
+
+    expect(mockUpdateCurtailmentResponseProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mode: CurtailmentMode.FULL_FLEET,
+        forceIncludeAllPairedMiners: false,
+        includeMaintenance: false,
+        forceIncludeMaintenance: false,
+      }),
+    );
   });
 
   it("rejects batch restore profiles without a positive restore batch size", async () => {

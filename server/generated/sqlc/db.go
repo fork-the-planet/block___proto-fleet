@@ -75,6 +75,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.bulkInsertNotificationHistoryStmt, err = db.PrepareContext(ctx, bulkInsertNotificationHistory); err != nil {
 		return nil, fmt.Errorf("error preparing query BulkInsertNotificationHistory: %w", err)
 	}
+	if q.bulkRefreshAllPairedTargetReadinessStmt, err = db.PrepareContext(ctx, bulkRefreshAllPairedTargetReadiness); err != nil {
+		return nil, fmt.Errorf("error preparing query BulkRefreshAllPairedTargetReadiness: %w", err)
+	}
 	if q.bumpCurtailmentTargetRetryStmt, err = db.PrepareContext(ctx, bumpCurtailmentTargetRetry); err != nil {
 		return nil, fmt.Errorf("error preparing query BumpCurtailmentTargetRetry: %w", err)
 	}
@@ -107,6 +110,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.cascadeRackDeviceSitesBulkStmt, err = db.PrepareContext(ctx, cascadeRackDeviceSitesBulk); err != nil {
 		return nil, fmt.Errorf("error preparing query CascadeRackDeviceSitesBulk: %w", err)
+	}
+	if q.claimAllPairedPolicyTargetsStmt, err = db.PrepareContext(ctx, claimAllPairedPolicyTargets); err != nil {
+		return nil, fmt.Errorf("error preparing query ClaimAllPairedPolicyTargets: %w", err)
 	}
 	if q.claimClosedLoopFullFleetTargetsStmt, err = db.PrepareContext(ctx, claimClosedLoopFullFleetTargets); err != nil {
 		return nil, fmt.Errorf("error preparing query ClaimClosedLoopFullFleetTargets: %w", err)
@@ -1053,6 +1059,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.refreshOpenErrorsLastSeenByDeviceStmt, err = db.PrepareContext(ctx, refreshOpenErrorsLastSeenByDevice); err != nil {
 		return nil, fmt.Errorf("error preparing query RefreshOpenErrorsLastSeenByDevice: %w", err)
 	}
+	if q.releaseUndispatchedAllPairedTargetsForRestoreStmt, err = db.PrepareContext(ctx, releaseUndispatchedAllPairedTargetsForRestore); err != nil {
+		return nil, fmt.Errorf("error preparing query ReleaseUndispatchedAllPairedTargetsForRestore: %w", err)
+	}
 	if q.removeAllDevicesFromDeviceSetStmt, err = db.PrepareContext(ctx, removeAllDevicesFromDeviceSet); err != nil {
 		return nil, fmt.Errorf("error preparing query RemoveAllDevicesFromDeviceSet: %w", err)
 	}
@@ -1491,6 +1500,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing bulkInsertNotificationHistoryStmt: %w", cerr)
 		}
 	}
+	if q.bulkRefreshAllPairedTargetReadinessStmt != nil {
+		if cerr := q.bulkRefreshAllPairedTargetReadinessStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing bulkRefreshAllPairedTargetReadinessStmt: %w", cerr)
+		}
+	}
 	if q.bumpCurtailmentTargetRetryStmt != nil {
 		if cerr := q.bumpCurtailmentTargetRetryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing bumpCurtailmentTargetRetryStmt: %w", cerr)
@@ -1544,6 +1558,11 @@ func (q *Queries) Close() error {
 	if q.cascadeRackDeviceSitesBulkStmt != nil {
 		if cerr := q.cascadeRackDeviceSitesBulkStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing cascadeRackDeviceSitesBulkStmt: %w", cerr)
+		}
+	}
+	if q.claimAllPairedPolicyTargetsStmt != nil {
+		if cerr := q.claimAllPairedPolicyTargetsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing claimAllPairedPolicyTargetsStmt: %w", cerr)
 		}
 	}
 	if q.claimClosedLoopFullFleetTargetsStmt != nil {
@@ -3121,6 +3140,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing refreshOpenErrorsLastSeenByDeviceStmt: %w", cerr)
 		}
 	}
+	if q.releaseUndispatchedAllPairedTargetsForRestoreStmt != nil {
+		if cerr := q.releaseUndispatchedAllPairedTargetsForRestoreStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing releaseUndispatchedAllPairedTargetsForRestoreStmt: %w", cerr)
+		}
+	}
 	if q.removeAllDevicesFromDeviceSetStmt != nil {
 		if cerr := q.removeAllDevicesFromDeviceSetStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing removeAllDevicesFromDeviceSetStmt: %w", cerr)
@@ -3757,6 +3781,7 @@ type Queries struct {
 	buildingsByIDsStmt                                         *sql.Stmt
 	bulkInsertCurtailmentTargetsStmt                           *sql.Stmt
 	bulkInsertNotificationHistoryStmt                          *sql.Stmt
+	bulkRefreshAllPairedTargetReadinessStmt                    *sql.Stmt
 	bumpCurtailmentTargetRetryStmt                             *sql.Stmt
 	cancelEnrollmentForFleetNodeStmt                           *sql.Stmt
 	cancelPendingEnrollmentStmt                                *sql.Stmt
@@ -3768,6 +3793,7 @@ type Queries struct {
 	cascadeRackDeviceBuildingsBulkStmt                         *sql.Stmt
 	cascadeRackDeviceSitesStmt                                 *sql.Stmt
 	cascadeRackDeviceSitesBulkStmt                             *sql.Stmt
+	claimAllPairedPolicyTargetsStmt                            *sql.Stmt
 	claimClosedLoopFullFleetTargetsStmt                        *sql.Stmt
 	claimMessageForProcessingStmt                              *sql.Stmt
 	clearCurtailmentAutomationActiveEventStmt                  *sql.Stmt
@@ -4083,6 +4109,7 @@ type Queries struct {
 	reconcileAuthenticationNeededPairingStatusByIdentifierStmt *sql.Stmt
 	reconcileDefaultPasswordPairingStatusByIdentifierStmt      *sql.Stmt
 	refreshOpenErrorsLastSeenByDeviceStmt                      *sql.Stmt
+	releaseUndispatchedAllPairedTargetsForRestoreStmt          *sql.Stmt
 	removeAllDevicesFromDeviceSetStmt                          *sql.Stmt
 	removeDevicesFromAnyRackStmt                               *sql.Stmt
 	removeDevicesFromDeviceSetStmt                             *sql.Stmt
@@ -4222,6 +4249,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		buildingsByIDsStmt:                                         q.buildingsByIDsStmt,
 		bulkInsertCurtailmentTargetsStmt:                           q.bulkInsertCurtailmentTargetsStmt,
 		bulkInsertNotificationHistoryStmt:                          q.bulkInsertNotificationHistoryStmt,
+		bulkRefreshAllPairedTargetReadinessStmt:                    q.bulkRefreshAllPairedTargetReadinessStmt,
 		bumpCurtailmentTargetRetryStmt:                             q.bumpCurtailmentTargetRetryStmt,
 		cancelEnrollmentForFleetNodeStmt:                           q.cancelEnrollmentForFleetNodeStmt,
 		cancelPendingEnrollmentStmt:                                q.cancelPendingEnrollmentStmt,
@@ -4233,6 +4261,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		cascadeRackDeviceBuildingsBulkStmt:                         q.cascadeRackDeviceBuildingsBulkStmt,
 		cascadeRackDeviceSitesStmt:                                 q.cascadeRackDeviceSitesStmt,
 		cascadeRackDeviceSitesBulkStmt:                             q.cascadeRackDeviceSitesBulkStmt,
+		claimAllPairedPolicyTargetsStmt:                            q.claimAllPairedPolicyTargetsStmt,
 		claimClosedLoopFullFleetTargetsStmt:                        q.claimClosedLoopFullFleetTargetsStmt,
 		claimMessageForProcessingStmt:                              q.claimMessageForProcessingStmt,
 		clearCurtailmentAutomationActiveEventStmt:                  q.clearCurtailmentAutomationActiveEventStmt,
@@ -4548,6 +4577,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		reconcileAuthenticationNeededPairingStatusByIdentifierStmt: q.reconcileAuthenticationNeededPairingStatusByIdentifierStmt,
 		reconcileDefaultPasswordPairingStatusByIdentifierStmt:      q.reconcileDefaultPasswordPairingStatusByIdentifierStmt,
 		refreshOpenErrorsLastSeenByDeviceStmt:                      q.refreshOpenErrorsLastSeenByDeviceStmt,
+		releaseUndispatchedAllPairedTargetsForRestoreStmt:          q.releaseUndispatchedAllPairedTargetsForRestoreStmt,
 		removeAllDevicesFromDeviceSetStmt:                          q.removeAllDevicesFromDeviceSetStmt,
 		removeDevicesFromAnyRackStmt:                               q.removeDevicesFromAnyRackStmt,
 		removeDevicesFromDeviceSetStmt:                             q.removeDevicesFromDeviceSetStmt,

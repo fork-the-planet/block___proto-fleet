@@ -94,6 +94,66 @@ func TestService_Start_RejectsNonAdminForceIncludeMaintenance(t *testing.T) {
 	assert.Contains(t, err.Error(), "force_include_maintenance")
 }
 
+func TestService_Start_RejectsNonAdminForceIncludeAllPairedMiners(t *testing.T) {
+	t.Parallel()
+	svc := NewService(newFakeStore())
+	req := validStartRequest(1)
+	req.Mode = models.ModeFullFleet
+	req.ForceIncludeAllPairedMiners = true
+
+	_, err := svc.Start(t.Context(), req)
+	require.Error(t, err)
+	assert.True(t, fleeterror.IsForbiddenError(err))
+	assert.Contains(t, err.Error(), "force_include_all_paired_miners")
+}
+
+func TestService_Start_RejectsForceIncludeAllPairedMinersOutsideFullFleet(t *testing.T) {
+	t.Parallel()
+	svc := NewService(newFakeStore())
+	req := validStartRequest(1)
+	req.Mode = models.ModeFixedKw
+	req.ForceIncludeAllPairedMiners = true
+	req.CanUseAdminControls = true
+
+	_, err := svc.Start(t.Context(), req)
+	require.Error(t, err)
+	assert.True(t, fleeterror.IsInvalidArgumentError(err))
+	assert.Contains(t, err.Error(), "force_include_all_paired_miners")
+}
+
+// Open-loop scopes (explicit miners / device sets) never run the policy's
+// release/reopen admission loop, so an all-paired event there would release
+// unpaired miners and never reclaim them. The service rejects the combination.
+func TestService_Start_RejectsForceIncludeAllPairedMinersForOpenLoopScopes(t *testing.T) {
+	t.Parallel()
+
+	scopes := map[string]Scope{
+		"device list": {Type: models.ScopeTypeDeviceList, DeviceIdentifiers: []string{"miner-1"}},
+		"device sets": {Type: models.ScopeTypeDeviceSets, DeviceSetIDs: []string{"set-1"}},
+		"mixed sites and miners": {
+			Type:              models.ScopeTypeMixed,
+			SiteIDs:           []int64{7},
+			DeviceIdentifiers: []string{"miner-1"},
+		},
+	}
+	for name, scope := range scopes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			svc := NewService(newFakeStore())
+			req := validStartRequest(1)
+			req.Mode = models.ModeFullFleet
+			req.Scope = scope
+			req.ForceIncludeAllPairedMiners = true
+			req.CanUseAdminControls = true
+
+			_, err := svc.Start(t.Context(), req)
+			require.Error(t, err)
+			assert.True(t, fleeterror.IsInvalidArgumentError(err))
+			assert.Contains(t, err.Error(), "whole-org or site scope")
+		})
+	}
+}
+
 func TestService_Start_RejectsCurtailIntervalWithoutBatchSize(t *testing.T) {
 	t.Parallel()
 
