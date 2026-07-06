@@ -1,4 +1,4 @@
-import { expect, Page } from "@playwright/test";
+import { expect, type Locator, Page } from "@playwright/test";
 import { DEFAULT_TIMEOUT, testConfig } from "../config/test.config";
 
 const FLEET_TAB_ROUTE = /.*\/fleet\/(?:sites|buildings|racks|miners)(?:[/?#].*)?$/;
@@ -11,6 +11,161 @@ export class BasePage {
 
   async reloadPage() {
     await this.page.reload();
+  }
+
+  async validateActiveFilter(filterLabel: string) {
+    await expect(this.activeFilterEditButton(filterLabel)).toBeVisible();
+  }
+
+  async validateActiveFilterSummary(filterValue: string, expectedSummary: string) {
+    await expect(await this.visibleTestIdLocator(`active-filter-${filterValue}-edit`)).toHaveText(expectedSummary);
+  }
+
+  async validateActiveFilterNotVisible(filterLabel: string) {
+    await expect(this.activeFilterEditButton(filterLabel)).toHaveCount(0);
+  }
+
+  async clickClearAllFilters() {
+    await this.page.getByRole("button", { name: "Clear all filters", exact: true }).click();
+  }
+
+  async clearActiveFilter(filterValue: string) {
+    if (!this.isMobile) {
+      const clearButton = await this.visibleTestIdLocator(`active-filter-${filterValue}-clear`);
+      await clearButton.scrollIntoViewIfNeeded();
+      await clearButton.click();
+      return;
+    }
+
+    const editButton = await this.visibleTestIdLocator(`active-filter-${filterValue}-edit`);
+    await editButton.click();
+
+    const popover = this.page.getByTestId("dropdown-filter-popover");
+    await expect(popover).toBeVisible();
+
+    const options = popover.locator('[data-testid^="filter-option-"]');
+    const count = await options.count();
+
+    for (let i = 0; i < count; i++) {
+      const option = options.nth(i);
+      const checkbox = option.locator('input[type="checkbox"]');
+      if (await checkbox.isChecked().catch(() => false)) {
+        await option.click();
+      }
+    }
+
+    await this.page.mouse.click(1, 1);
+    await expect(popover).toBeHidden();
+  }
+
+  async clickNewSavedViewButton() {
+    const emptyState = this.viewsEmptyStateNewButton();
+    if (await emptyState.isVisible().catch(() => false)) {
+      await emptyState.click();
+      return;
+    }
+
+    await this.openViewsPopover();
+    await this.page.getByTestId("fleet-view-tabs-popover-new-view").click();
+  }
+
+  async clickClearActiveView() {
+    await this.openViewsPopover();
+    await this.page.getByTestId("fleet-view-tabs-popover-clear-view").click();
+  }
+
+  async validateViewModalOpened(title: "New view" | "Update view" | "Rename view") {
+    const modal = this.page.getByTestId("view-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText(title);
+  }
+
+  async inputViewName(name: string) {
+    await this.page.locator("#view-name").fill(name);
+  }
+
+  async saveNewView() {
+    await this.page.getByTestId("view-modal").getByRole("button", { name: "Save", exact: true }).click();
+    await expect(this.page.getByTestId("view-modal")).toBeHidden();
+  }
+
+  async updateSavedView() {
+    await this.page.getByTestId("view-modal").getByRole("button", { name: "Update", exact: true }).click();
+    await expect(this.page.getByTestId("view-modal")).toBeHidden();
+  }
+
+  async confirmRenameView() {
+    await this.page.getByTestId("view-modal").getByRole("button", { name: "Rename", exact: true }).click();
+    await expect(this.page.getByTestId("view-modal")).toBeHidden();
+  }
+
+  async validateViewTabVisible(viewName: string) {
+    await this.openViewsPopover();
+    await expect(this.viewRow(viewName)).toBeVisible();
+    await this.fleetViewTabsTrigger().click();
+    await expect(this.viewsPopover()).toBeHidden();
+  }
+
+  async validateViewTabActive(viewName: string) {
+    await expect(this.fleetViewTabsTrigger()).toContainText(viewName);
+  }
+
+  async clickViewTab(viewName: string) {
+    await this.openViewsPopover();
+    await this.viewRow(viewName).click();
+  }
+
+  async clickResetViewAction(viewName: string) {
+    await this.validateViewTabActive(viewName);
+    await this.openKebabPopover();
+    await this.page.getByTestId("fleet-view-tabs-reset-action").click();
+  }
+
+  async clickUpdateViewAction(viewName: string) {
+    await this.validateViewTabActive(viewName);
+    await this.openKebabPopover();
+    await this.page.getByTestId("fleet-view-tabs-update-action").click();
+  }
+
+  async clickRenameViewAction(viewName: string) {
+    await this.validateViewTabActive(viewName);
+    await this.openKebabPopover();
+    await this.page.getByTestId("fleet-view-tabs-rename-action").click();
+  }
+
+  async clickDeleteViewAction(viewName: string) {
+    await this.validateViewTabActive(viewName);
+    await this.openKebabPopover();
+    await this.page.getByTestId("fleet-view-tabs-delete-action").click();
+  }
+
+  async validateViewTabNotVisible(viewName: string) {
+    const trigger = this.fleetViewTabsTrigger();
+    if (await trigger.isVisible().catch(() => false)) {
+      await expect(trigger).not.toContainText(viewName);
+      await trigger.click();
+      const popover = this.viewsPopover();
+      if (await popover.isVisible().catch(() => false)) {
+        await expect(this.viewRow(viewName)).toHaveCount(0);
+        await trigger.click();
+        await expect(popover).toBeHidden();
+      }
+      return;
+    }
+
+    await expect(this.viewsEmptyStateNewButton()).toBeVisible();
+  }
+
+  async validateDeleteViewDialogOpened(viewName: string) {
+    const dialog = this.page.getByTestId("fleet-view-tabs-delete-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(`Delete the view "${viewName}"? This can't be undone.`);
+  }
+
+  async confirmDeleteView() {
+    const dialog = this.page.getByTestId("fleet-view-tabs-delete-dialog");
+    await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(dialog).toBeHidden();
   }
 
   async validateLoggedIn(timeout: number = DEFAULT_TIMEOUT) {
@@ -313,5 +468,83 @@ export class BasePage {
     } finally {
       this.page.setDefaultTimeout(originalTimeout);
     }
+  }
+
+  private activeFilterEditButton(filterLabel: string): Locator {
+    return this.page
+      .locator('button[data-testid^="active-filter-"][data-testid$="-edit"]')
+      .filter({ hasText: filterLabel });
+  }
+
+  private fleetViewTabsContainer(): Locator {
+    return this.page.getByTestId(this.isMobile ? "fleet-view-tabs-mobile" : "fleet-view-tabs-desktop");
+  }
+
+  private fleetViewTabsTrigger(): Locator {
+    return this.fleetViewTabsContainer().getByTestId("fleet-view-tabs-trigger");
+  }
+
+  private viewsEmptyStateNewButton(): Locator {
+    return this.fleetViewTabsContainer().getByTestId("fleet-view-tabs-new-view-button");
+  }
+
+  private viewsPopover(): Locator {
+    return this.page.getByTestId("fleet-view-tabs-views-popover");
+  }
+
+  private kebabButton(): Locator {
+    return this.fleetViewTabsContainer().getByTestId("fleet-view-tabs-kebab");
+  }
+
+  private kebabPopover(): Locator {
+    return this.page.getByTestId("fleet-view-tabs-kebab-popover");
+  }
+
+  private viewRow(viewName: string): Locator {
+    return this.viewsPopover().locator('[data-testid^="fleet-view-row-"]').filter({ hasText: viewName });
+  }
+
+  private async openViewsPopover() {
+    await this.fleetViewTabsTrigger().click();
+    await expect(this.viewsPopover()).toBeVisible();
+  }
+
+  private async openKebabPopover() {
+    await this.kebabButton().click();
+    await expect(this.kebabPopover()).toBeVisible();
+  }
+
+  private async visibleTestIdLocator(testId: string): Promise<Locator> {
+    const matches = this.page.getByTestId(testId);
+    let visibleIndex = -1;
+
+    await expect
+      .poll(
+        async () => {
+          const count = await matches.count();
+          const visibleIndexes: number[] = [];
+
+          for (let i = 0; i < count; i++) {
+            const candidate = matches.nth(i);
+            if (await candidate.isVisible().catch(() => false)) {
+              visibleIndexes.push(i);
+            }
+          }
+
+          if (visibleIndexes.length === 1) {
+            [visibleIndex] = visibleIndexes;
+            return `single:${visibleIndex}`;
+          }
+
+          return visibleIndexes.length === 0 ? "none" : `multiple:${visibleIndexes.join(",")}`;
+        },
+        {
+          timeout: DEFAULT_TIMEOUT,
+          message: `Expected a single visible locator for test id "${testId}".`,
+        },
+      )
+      .toMatch(/^single:\d+$/);
+
+    return matches.nth(visibleIndex);
   }
 }
