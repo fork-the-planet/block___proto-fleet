@@ -20,6 +20,7 @@ import {
   CurtailmentTargetRollupSchema,
   CurtailmentTargetSchema,
   CurtailmentTargetState,
+  CurtailmentUnavailableReasonSchema,
   FixedKwParamsSchema,
   FullFleetParamsSchema,
   ScopeDeviceListSchema,
@@ -200,6 +201,11 @@ describe("useCurtailmentApi", () => {
         targetKw: 5,
         observedReductionKw: 5,
         remainingPowerKw: 1,
+        // Live-progress inputs (issue #660): elapsed anchors on startedAt,
+        // falling back to createdAt for open-loop events that stamp
+        // started_at only after confirmation.
+        startedAt: "2026-05-01T12:00:00.000Z",
+        createdAt: "2026-05-01T11:58:00.000Z",
       }),
     );
     expect(result.current.activeEventFormValues).toEqual(
@@ -226,6 +232,60 @@ describe("useCurtailmentApi", () => {
         startedAt: "2026-05-01T12:00:00.000Z",
       }),
     );
+  });
+
+  it("maps unavailable target reasons for active curtailment progress", async () => {
+    const activeEvent = curtailmentEvent({
+      targetRollup: create(CurtailmentTargetRollupSchema, {
+        unavailable: 5,
+        total: 5,
+        unavailableReasons: [
+          create(CurtailmentUnavailableReasonSchema, { reason: "offline", count: 3 }),
+          create(CurtailmentUnavailableReasonSchema, { reason: "authentication_needed", count: 1 }),
+          create(CurtailmentUnavailableReasonSchema, { reason: "maintenance", count: 1 }),
+        ],
+      }),
+    });
+    mockListActiveCurtailments.mockResolvedValueOnce({ event: activeEvent });
+
+    const { result } = renderHook(() => useCurtailmentApi());
+
+    await act(async () => {
+      await result.current.refreshCurtailment();
+    });
+
+    expect(result.current.activeEvent?.unavailableReasonCounts).toEqual([
+      { label: "offline", count: 3 },
+      { label: "in maintenance", count: 1 },
+      { label: "needs authentication", count: 1 },
+    ]);
+  });
+
+  it("falls back to humanized raw codes for unmapped or blank unavailable reasons", async () => {
+    // Servers can grow new canonical reason codes ahead of the client's label
+    // map; the raw code (underscores humanized) must render rather than break.
+    const activeEvent = curtailmentEvent({
+      targetRollup: create(CurtailmentTargetRollupSchema, {
+        unavailable: 5,
+        total: 5,
+        unavailableReasons: [
+          create(CurtailmentUnavailableReasonSchema, { reason: "some_new_code", count: 3 }),
+          create(CurtailmentUnavailableReasonSchema, { reason: "   ", count: 2 }),
+        ],
+      }),
+    });
+    mockListActiveCurtailments.mockResolvedValueOnce({ event: activeEvent });
+
+    const { result } = renderHook(() => useCurtailmentApi());
+
+    await act(async () => {
+      await result.current.refreshCurtailment();
+    });
+
+    expect(result.current.activeEvent?.unavailableReasonCounts).toEqual([
+      { label: "some new code", count: 3 },
+      { label: "reason unknown", count: 2 },
+    ]);
   });
 
   it("prefers the live rollup total over the snapshot count for active events", async () => {
@@ -762,6 +822,13 @@ describe("useCurtailmentApi", () => {
       expect.objectContaining({
         curtailBatchSize: "20",
         curtailBatchIntervalSec: "0",
+      }),
+    );
+    // The active card's time-to-curtail estimate reads the raw pacing values.
+    expect(result.current.activeEvent).toEqual(
+      expect.objectContaining({
+        curtailBatchSize: 20,
+        curtailBatchIntervalSec: 0,
       }),
     );
   });

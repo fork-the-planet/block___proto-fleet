@@ -1193,20 +1193,45 @@ func (q *Queries) GetCurtailmentReconcilerHeartbeat(ctx context.Context) (Curtai
 
 const getCurtailmentTargetRollupByEvent = `-- name: GetCurtailmentTargetRollupByEvent :one
 SELECT
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'pending')::BIGINT AS pending,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state IN ('dispatching', 'dispatched'))::BIGINT AS dispatched,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'confirmed')::BIGINT AS confirmed,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'drifted')::BIGINT AS drifted,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'resolved')::BIGINT AS resolved,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'released')::BIGINT AS released,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'restore_failed')::BIGINT AS restore_failed,
-    COUNT(ct.curtailment_event_id) FILTER (WHERE ct.state = 'unavailable')::BIGINT AS unavailable,
-    COUNT(ct.curtailment_event_id)::BIGINT AS total
+    COALESCE(state_rollup.pending, 0)::BIGINT AS pending,
+    COALESCE(state_rollup.dispatched, 0)::BIGINT AS dispatched,
+    COALESCE(state_rollup.confirmed, 0)::BIGINT AS confirmed,
+    COALESCE(state_rollup.drifted, 0)::BIGINT AS drifted,
+    COALESCE(state_rollup.resolved, 0)::BIGINT AS resolved,
+    COALESCE(state_rollup.released, 0)::BIGINT AS released,
+    COALESCE(state_rollup.restore_failed, 0)::BIGINT AS restore_failed,
+    COALESCE(state_rollup.unavailable, 0)::BIGINT AS unavailable,
+    COALESCE(state_rollup.total, 0)::BIGINT AS total,
+    COALESCE(unavailable_reason_rollup.reasons, '{}'::JSONB) AS unavailable_reasons
 FROM curtailment_event ce
-LEFT JOIN curtailment_target ct ON ct.curtailment_event_id = ce.id
+LEFT JOIN LATERAL (
+    SELECT
+        COUNT(*) FILTER (WHERE ct.state = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE ct.state IN ('dispatching', 'dispatched')) AS dispatched,
+        COUNT(*) FILTER (WHERE ct.state = 'confirmed') AS confirmed,
+        COUNT(*) FILTER (WHERE ct.state = 'drifted') AS drifted,
+        COUNT(*) FILTER (WHERE ct.state = 'resolved') AS resolved,
+        COUNT(*) FILTER (WHERE ct.state = 'released') AS released,
+        COUNT(*) FILTER (WHERE ct.state = 'restore_failed') AS restore_failed,
+        COUNT(*) FILTER (WHERE ct.state = 'unavailable') AS unavailable,
+        COUNT(*) AS total
+    FROM curtailment_target ct
+    WHERE ct.curtailment_event_id = ce.id
+) state_rollup ON true
+LEFT JOIN LATERAL (
+    SELECT jsonb_object_agg(reason, reason_count) AS reasons
+    FROM (
+        SELECT
+            COALESCE(NULLIF(ct.last_error, ''), 'unknown') AS reason,
+            COUNT(*)::BIGINT AS reason_count
+        FROM curtailment_target ct
+        WHERE ct.curtailment_event_id = ce.id
+            AND ct.state = 'unavailable'
+        GROUP BY reason
+    ) reason_counts
+) unavailable_reason_rollup ON true
 WHERE ce.org_id = $1
     AND ce.event_uuid = $2
-GROUP BY ce.id
 `
 
 type GetCurtailmentTargetRollupByEventParams struct {
@@ -1215,25 +1240,31 @@ type GetCurtailmentTargetRollupByEventParams struct {
 }
 
 type GetCurtailmentTargetRollupByEventRow struct {
-	Pending       int64
-	Dispatched    int64
-	Confirmed     int64
-	Drifted       int64
-	Resolved      int64
-	Released      int64
-	RestoreFailed int64
-	Unavailable   int64
-	Total         int64
+	Pending            int64
+	Dispatched         int64
+	Confirmed          int64
+	Drifted            int64
+	Resolved           int64
+	Released           int64
+	RestoreFailed      int64
+	Unavailable        int64
+	Total              int64
+	UnavailableReasons json.RawMessage
 }
 
 // Org-scoped aggregate for paginated event detail. Target pages can be
 // partial, but the rollup must describe the whole event.
 //
-// Counts ct.curtailment_event_id (NULL exactly on the LEFT JOIN's no-target
-// row, like any ct column) so the aggregate only touches index columns of
-// idx_curtailment_target_event_state and stays index-only-scannable. State
-// buckets mirror the ListActiveCurtailmentEvents lateral rollup above; keep
-// the bucketing rules in sync (dispatching/dispatched conflate).
+// Both aggregates are lateral subqueries correlated only on ce.id — the same
+// shape as the ListActiveCurtailmentEvents rollup above — so each executes
+// exactly once for the single matched event instead of joining the per-target
+// row stream (which lets the planner rescan a lateral per target row on
+// fleet-sized events; this query sits on the polled event-detail path). The
+// state aggregate touches only index columns of
+// idx_curtailment_target_event_state and stays index-only-scannable; keep the
+// state bucketing rules in sync with the active-list rollup
+// (dispatching/dispatched conflate). Unavailable reason buckets are covered
+// by idx_curtailment_target_unavailable_reason.
 func (q *Queries) GetCurtailmentTargetRollupByEvent(ctx context.Context, arg GetCurtailmentTargetRollupByEventParams) (GetCurtailmentTargetRollupByEventRow, error) {
 	row := q.queryRow(ctx, q.getCurtailmentTargetRollupByEventStmt, getCurtailmentTargetRollupByEvent, arg.OrgID, arg.EventUuid)
 	var i GetCurtailmentTargetRollupByEventRow
@@ -1247,6 +1278,7 @@ func (q *Queries) GetCurtailmentTargetRollupByEvent(ctx context.Context, arg Get
 		&i.RestoreFailed,
 		&i.Unavailable,
 		&i.Total,
+		&i.UnavailableReasons,
 	)
 	return i, err
 }
@@ -1537,7 +1569,8 @@ SELECT
     COALESCE(rollup.released, 0)::BIGINT AS rollup_released,
     COALESCE(rollup.restore_failed, 0)::BIGINT AS rollup_restore_failed,
     COALESCE(rollup.unavailable, 0)::BIGINT AS rollup_unavailable,
-    COALESCE(rollup.total, 0)::BIGINT AS rollup_total
+    COALESCE(rollup.total, 0)::BIGINT AS rollup_total,
+    COALESCE(unavailable_reason_rollup.reasons, '{}'::JSONB) AS rollup_unavailable_reasons
 FROM curtailment_event ce
 LEFT JOIN LATERAL (
     -- State buckets mirror GetCurtailmentTargetRollupByEvent below; keep the
@@ -1555,6 +1588,21 @@ LEFT JOIN LATERAL (
     FROM curtailment_target ct
     WHERE ct.curtailment_event_id = ce.id
 ) rollup ON true
+LEFT JOIN LATERAL (
+    -- Reason buckets are split from the state rollup so the state counts stay
+    -- index-only on idx_curtailment_target_event_state; this aggregate is
+    -- covered by idx_curtailment_target_unavailable_reason.
+    SELECT jsonb_object_agg(reason, reason_count) AS reasons
+    FROM (
+        SELECT
+            COALESCE(NULLIF(ct.last_error, ''), 'unknown') AS reason,
+            COUNT(*)::BIGINT AS reason_count
+        FROM curtailment_target ct
+        WHERE ct.curtailment_event_id = ce.id
+            AND ct.state = 'unavailable'
+        GROUP BY reason
+    ) reason_counts
+) unavailable_reason_rollup ON true
 WHERE ce.org_id = $1
     AND ce.state IN ('pending', 'active', 'restoring')
 ORDER BY COALESCE(ce.started_at, ce.created_at) DESC, ce.id DESC
@@ -1607,6 +1655,7 @@ type ListActiveCurtailmentEventsRow struct {
 	RollupRestoreFailed         int64
 	RollupUnavailable           int64
 	RollupTotal                 int64
+	RollupUnavailableReasons    json.RawMessage
 }
 
 // Org-scoped list of every non-terminal event. Multiple can be active when
@@ -1677,6 +1726,7 @@ func (q *Queries) ListActiveCurtailmentEvents(ctx context.Context, orgID int64) 
 			&i.RollupRestoreFailed,
 			&i.RollupUnavailable,
 			&i.RollupTotal,
+			&i.RollupUnavailableReasons,
 		); err != nil {
 			return nil, err
 		}
