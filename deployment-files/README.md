@@ -198,3 +198,49 @@ The configs live under `server/monitoring/grafana/`:
   `/internal/alertmanager-webhook` endpoint.
 - `provisioning/alerting/notification-policies.yaml` — root routing
   tree (grouping + repeat interval).
+
+### Enabling system monitoring
+
+Host system monitoring is **off by default** and requires the alerts
+stack, since it reuses the same metrics pipeline, Grafana rule engine,
+and notification channels:
+
+```bash
+./run-fleet.sh --enable-beta-alerts --enable-system-monitoring
+```
+
+(or set `ENABLE_BETA_ALERTS=true` and `ENABLE_SYSTEM_MONITORING=true`
+in `.env` so upgrades keep it on).
+
+This layers in `docker-compose.system-monitoring.yaml`, which:
+
+- starts an in-process collector in fleet-api that samples host CPU,
+  memory, and disk usage every 30 seconds into
+  `notification_metric_sample`;
+- mounts an empty sentinel volume **read-only** at `/hostfs` inside
+  fleet-api. With the default local volume driver all named volumes
+  share one backing filesystem, so the disk gauge reports the disk
+  holding the TimescaleDB data (the one that filling up takes fleet
+  down) without exposing any database files. To watch a different
+  filesystem, change the mount source in
+  `docker-compose.system-monitoring.yaml`;
+- provisions the `proto-fleet-system` alert rules (Host CPU High,
+  Host Memory High, Host Disk Space Low, Fleet Heartbeat Stale). They
+  deliver to each organization's configured alert channels like any
+  other rule, and can be paused per-org from the alerts settings page;
+- provisions a "System Monitoring" Grafana dashboard with host gauges
+  and slow-query tables backed by `pg_stat_statements`, read through a
+  narrow `fleet_slow_statements()` definer function so the Grafana role
+  sees this database's normalized statement stats without cluster-wide
+  statistics privileges.
+
+If fleet-api itself goes down, Grafana keeps evaluating the heartbeat
+rule but can only deliver the notification once fleet-api is back; use
+the Grafana UI at `127.0.0.1:3030` during an outage.
+
+Disabling the feature removes the alert rules on the next start (via a
+provisioned tombstone) but leaves the System Monitoring dashboard in
+Grafana; delete it from the UI if it bothers you. fleet-api also
+serves `GET /health/ready` (200 only when its database answers a ping)
+for external uptime monitors, alongside the always-static liveness
+check at `GET /health`.
