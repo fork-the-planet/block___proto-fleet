@@ -45,12 +45,7 @@ export class FleetLocationsPage extends BasePage {
     await this.page.getByTestId("building-settings-modal-save").click();
 
     await expect(this.page.getByTestId("building-settings-modal")).toHaveCount(0);
-
-    const fullScreenModal = this.page.getByTestId("full-screen-two-pane-modal");
-    if (await fullScreenModal.isVisible().catch(() => false)) {
-      await fullScreenModal.getByTestId("header-icon-button").click();
-      await expect(fullScreenModal).toHaveCount(0);
-    }
+    await this.closeFullScreenModalIfVisible();
 
     const row = this.getListRowByName(buildingName);
     await expect(row).toBeVisible();
@@ -258,6 +253,28 @@ export class FleetLocationsPage extends BasePage {
 
   async validateBuildingNotVisible(name: string) {
     await this.navigateToBuildingsPage();
+    await expect(this.getListRowByName(name)).toHaveCount(0);
+  }
+
+  async getSiteIdByName(name: string): Promise<bigint> {
+    await this.navigateToSitesPage();
+    return await this.getScopeIdFromRowName(name, "site");
+  }
+
+  async getBuildingIdByName(name: string): Promise<bigint> {
+    await this.navigateToBuildingsPage();
+    return await this.getScopeIdFromRowName(name, "building");
+  }
+
+  async applySiteFilter(siteNames: string[]) {
+    await this.setNestedCheckboxFilterSelection("site", siteNames);
+  }
+
+  async validateCurrentBuildingVisible(name: string) {
+    await expect(this.getListRowByName(name)).toBeVisible();
+  }
+
+  async validateCurrentBuildingNotVisible(name: string) {
     await expect(this.getListRowByName(name)).toHaveCount(0);
   }
 
@@ -525,7 +542,7 @@ export class FleetLocationsPage extends BasePage {
       return;
     }
 
-    await fullScreenModal.getByTestId("header-icon-button").click();
+    await this.tryAction(() => fullScreenModal.getByTestId("header-icon-button").click());
     await expect(fullScreenModal).toHaveCount(0);
   }
 

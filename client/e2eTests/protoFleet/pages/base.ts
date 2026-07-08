@@ -25,6 +25,11 @@ export class BasePage {
     await expect(this.activeFilterEditButton(filterLabel)).toHaveCount(0);
   }
 
+  async validateNoResultsEmptyState() {
+    await expect(this.page.getByText("No results", { exact: true })).toBeVisible();
+    await expect(this.page.getByRole("button", { name: "Clear all filters", exact: true })).toBeVisible();
+  }
+
   async clickClearAllFilters() {
     await this.page.getByRole("button", { name: "Clear all filters", exact: true }).click();
   }
@@ -166,6 +171,157 @@ export class BasePage {
     const dialog = this.page.getByTestId("fleet-view-tabs-delete-dialog");
     await dialog.getByRole("button", { name: "Delete", exact: true }).click();
     await expect(dialog).toBeHidden();
+  }
+
+  protected async setNestedCheckboxFilterSelection(categoryKey: string, targetLabels: string[]) {
+    if (targetLabels.length !== 1) {
+      throw new Error(
+        `Expected exactly one target label for "${categoryKey}" filter, received ${targetLabels.length}.`,
+      );
+    }
+
+    const [targetLabel] = targetLabels;
+    const activeEditButton = await this.findVisibleTestIdLocator(`active-filter-${categoryKey}-edit`);
+    let clearedExistingSelection = false;
+    if (activeEditButton) {
+      const currentSummary = ((await activeEditButton.textContent()) ?? "").replace(/\s+/g, " ").trim();
+      if (currentSummary === targetLabel) {
+        return;
+      }
+
+      await this.clearActiveFilter(categoryKey);
+      await this.waitForActiveFilterToClear(categoryKey);
+      clearedExistingSelection = true;
+    }
+
+    const addFilterPopover = await this.openVisibleAddFilter();
+    const submenu = await this.openNestedFilterSubmenu(addFilterPopover, categoryKey);
+    await this.waitForCheckboxFilterOptions(submenu, categoryKey, targetLabels);
+    if (clearedExistingSelection) {
+      await this.waitForCheckboxFilterSelectionState(submenu, categoryKey, []);
+    }
+    const targetOption = (await this.readCheckboxFilterOptionStates(submenu)).find(
+      ({ label }) => label === targetLabel,
+    );
+    if (!targetOption) {
+      throw new Error(`Could not find "${targetLabel}" in the visible "${categoryKey}" filter options.`);
+    }
+
+    await (await this.visibleContainerTestIdLocator(submenu, `filter-option-${targetOption.id}`)).click();
+    await this.dismissNestedAddFilterPopover();
+  }
+
+  protected async toggleAllNestedCheckboxFilterOptions(categoryKey: string) {
+    const activeEditButton = await this.findVisibleTestIdLocator(`active-filter-${categoryKey}-edit`);
+    if (activeEditButton) {
+      await this.clearActiveFilter(categoryKey);
+      return;
+    }
+
+    const addFilterPopover = await this.openVisibleAddFilter();
+    const submenu = await this.openNestedFilterSubmenu(addFilterPopover, categoryKey);
+    await this.toggleVisibleCheckboxFilterOptions(submenu);
+    await this.dismissNestedAddFilterPopover();
+  }
+
+  private async toggleVisibleCheckboxFilterOptions(container: Locator) {
+    const options = container.locator('[data-testid^="filter-option-"]');
+    const count = await options.count();
+    if (count === 0) {
+      return;
+    }
+
+    let anyChecked = false;
+    for (let i = 0; i < count; i++) {
+      if (
+        await options
+          .nth(i)
+          .locator('input[type="checkbox"]')
+          .isChecked()
+          .catch(() => false)
+      ) {
+        anyChecked = true;
+        break;
+      }
+    }
+
+    for (let i = 0; i < count; i++) {
+      const option = options.nth(i);
+      const isChecked = await option
+        .locator('input[type="checkbox"]')
+        .isChecked()
+        .catch(() => false);
+      if (isChecked === anyChecked) {
+        await option.click();
+      }
+    }
+  }
+
+  private async waitForCheckboxFilterOptions(container: Locator, categoryKey: string, targetLabels: string[]) {
+    await expect
+      .poll(
+        async () => {
+          const visibleOptions = await this.readCheckboxFilterOptionStates(container);
+          const visibleLabels = new Set(visibleOptions.map(({ label }) => label));
+          return targetLabels.filter((label) => !visibleLabels.has(label));
+        },
+        {
+          timeout: DEFAULT_TIMEOUT,
+          message: `Expected the visible "${categoryKey}" filter options to include: ${targetLabels.join(", ")}.`,
+        },
+      )
+      .toEqual([]);
+  }
+
+  private async waitForCheckboxFilterSelectionState(
+    container: Locator,
+    categoryKey: string,
+    expectedCheckedLabels: string[],
+  ) {
+    const expected = [...expectedCheckedLabels].sort();
+    await expect
+      .poll(
+        async () =>
+          (await this.readCheckboxFilterOptionStates(container))
+            .filter(({ checked }) => checked)
+            .map(({ label }) => label)
+            .sort(),
+        {
+          timeout: DEFAULT_TIMEOUT,
+          message: `Expected the visible "${categoryKey}" filter selection to be ${expected.join(", ") || "empty"}.`,
+        },
+      )
+      .toEqual(expected);
+  }
+
+  private async readCheckboxFilterOptionStates(container: Locator) {
+    const options = container.locator('[data-testid^="filter-option-"]');
+    const count = await options.count();
+    const visibleOptions = new Map<string, { id: string; label: string; checked: boolean }>();
+
+    for (let i = 0; i < count; i++) {
+      const option = options.nth(i);
+      if (!(await option.isVisible().catch(() => false))) {
+        continue;
+      }
+
+      const testId = await option.getAttribute("data-testid");
+      if (!testId) {
+        continue;
+      }
+
+      const id = testId.replace(/^filter-option-/, "");
+      visibleOptions.set(id, {
+        id,
+        label: ((await option.textContent()) ?? "").replace(/\s+/g, " ").trim(),
+        checked: await option
+          .locator('input[type="checkbox"]')
+          .isChecked()
+          .catch(() => false),
+      });
+    }
+
+    return [...visibleOptions.values()];
   }
 
   async validateLoggedIn(timeout: number = DEFAULT_TIMEOUT) {
@@ -514,37 +670,140 @@ export class BasePage {
     await expect(this.kebabPopover()).toBeVisible();
   }
 
-  private async visibleTestIdLocator(testId: string): Promise<Locator> {
-    const matches = this.page.getByTestId(testId);
+  private async getVisibleAddFilterTrigger(): Promise<Locator> {
+    const triggers = this.page.getByTestId("filter-nested-add-filter");
     let visibleIndex = -1;
 
     await expect
       .poll(
         async () => {
-          const count = await matches.count();
-          const visibleIndexes: number[] = [];
+          const count = await triggers.count();
 
           for (let i = 0; i < count; i++) {
-            const candidate = matches.nth(i);
-            if (await candidate.isVisible().catch(() => false)) {
-              visibleIndexes.push(i);
+            const trigger = triggers.nth(i);
+            if (await trigger.isVisible().catch(() => false)) {
+              visibleIndex = i;
+              return "visible";
             }
           }
 
-          if (visibleIndexes.length === 1) {
-            [visibleIndex] = visibleIndexes;
-            return `single:${visibleIndex}`;
-          }
-
-          return visibleIndexes.length === 0 ? "none" : `multiple:${visibleIndexes.join(",")}`;
+          return "hidden";
         },
         {
           timeout: DEFAULT_TIMEOUT,
-          message: `Expected a single visible locator for test id "${testId}".`,
+          message: "Expected a visible Add Filter trigger.",
         },
       )
-      .toMatch(/^single:\d+$/);
+      .toBe("visible");
 
-    return matches.nth(visibleIndex);
+    return triggers.nth(visibleIndex);
+  }
+
+  private async openVisibleAddFilter() {
+    const trigger = await this.getVisibleAddFilterTrigger();
+    await trigger.click();
+    const popover = this.page.getByTestId("nested-dropdown-filter-popover");
+    await expect(popover).toBeVisible();
+    return popover;
+  }
+
+  private async openNestedFilterSubmenu(popover: Locator, categoryKey: string) {
+    await popover.getByTestId(`nested-dropdown-filter-row-${categoryKey}`).click();
+    const desktopSubmenu = this.page.getByTestId(`nested-dropdown-filter-submenu-${categoryKey}`);
+    const mobileBack = popover.getByTestId("nested-dropdown-filter-back");
+    await expect(desktopSubmenu.or(mobileBack)).toBeVisible();
+
+    if (await desktopSubmenu.isVisible().catch(() => false)) {
+      return desktopSubmenu;
+    }
+
+    return popover;
+  }
+
+  private async dismissNestedAddFilterPopover() {
+    const popover = this.page.getByTestId("nested-dropdown-filter-popover");
+    if (!(await popover.isVisible().catch(() => false))) {
+      return;
+    }
+
+    if (this.isMobile) {
+      await this.page.mouse.click(1, 1);
+      await expect(popover).toBeHidden();
+      return;
+    }
+
+    const trigger = await this.getVisibleAddFilterTrigger();
+    await trigger.click();
+    await expect(popover).toBeHidden();
+  }
+
+  private async waitForActiveFilterToClear(categoryKey: string) {
+    await expect
+      .poll(
+        async () => ((await this.findVisibleTestIdLocator(`active-filter-${categoryKey}-edit`)) ? "visible" : "hidden"),
+        {
+          timeout: DEFAULT_TIMEOUT,
+          message: `Expected active "${categoryKey}" filter chip to clear.`,
+        },
+      )
+      .toBe("hidden");
+  }
+
+  private async findVisibleTestIdLocator(testId: string): Promise<Locator | null> {
+    const matches = this.page.getByTestId(testId);
+    const count = await matches.count();
+    const visibleIndexes: number[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const candidate = matches.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        visibleIndexes.push(i);
+      }
+    }
+
+    if (visibleIndexes.length === 0) {
+      return null;
+    }
+
+    if (visibleIndexes.length > 1) {
+      throw new Error(`Expected a single visible locator for test id "${testId}", found ${visibleIndexes.length}.`);
+    }
+
+    return matches.nth(visibleIndexes[0]);
+  }
+
+  private async visibleTestIdLocator(testId: string): Promise<Locator> {
+    await expect
+      .poll(async () => ((await this.findVisibleTestIdLocator(testId)) ? "single" : "none"), {
+        timeout: DEFAULT_TIMEOUT,
+        message: `Expected a single visible locator for test id "${testId}".`,
+      })
+      .toBe("single");
+
+    const match = await this.findVisibleTestIdLocator(testId);
+    if (!match) {
+      throw new Error(`Expected a visible locator for test id "${testId}".`);
+    }
+
+    return match;
+  }
+
+  private async visibleContainerTestIdLocator(container: Locator, testId: string): Promise<Locator> {
+    const matches = container.getByTestId(testId);
+    const count = await matches.count();
+    const visibleIndexes: number[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const candidate = matches.nth(i);
+      if (await candidate.isVisible().catch(() => false)) {
+        visibleIndexes.push(i);
+      }
+    }
+
+    if (visibleIndexes.length !== 1) {
+      throw new Error(`Expected a single visible locator for test id "${testId}" within the current filter container.`);
+    }
+
+    return matches.nth(visibleIndexes[0]);
   }
 }
