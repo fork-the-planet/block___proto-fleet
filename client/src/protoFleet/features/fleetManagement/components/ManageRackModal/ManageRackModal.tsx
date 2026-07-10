@@ -7,6 +7,7 @@ import ReparentWarningDialog from "./ReparentWarningDialog";
 import ScanMinerQrModal from "./ScanMinerQrModal";
 import SearchMinersModal from "./SearchMinersModal";
 import { type AssignmentMode, orderIndexToOrigin, originLabel, type RackFormData, type SelectedSlot } from "./types";
+import { useRackMinerScope } from "./useRackMinerScope";
 import { fetchAllMinerSnapshots } from "@/protoFleet/api/fetchAllMinerSnapshots";
 import { type DeviceSet, type RackSlot } from "@/protoFleet/api/generated/device_set/v1/device_set_pb";
 import {
@@ -113,6 +114,9 @@ export default function ManageRackModal({
   // so we omit placement from the request (preserving the rack's current
   // site/building) rather than sending an explicit change.
   const canManagePlacement = useHasPermission("site:manage");
+
+  // Header SitePicker scope, forwarded to the miner-selection sub-modals.
+  const scope = useRackMinerScope();
 
   // Fetch all miners for display data (name, IP, model, etc.)
   const { miners: minersMap } = useFleet({ pageSize: 1000 });
@@ -831,6 +835,7 @@ export default function ManageRackModal({
           eligibility={eligibility}
           targetRackLabel={rackSettings.label}
           maxSlots={totalSlots}
+          scope={scope}
           onDismiss={() => setShowManageMiners(false)}
           onConfirm={handleManageMinersConfirm}
         />
@@ -841,6 +846,7 @@ export default function ManageRackModal({
           show={showSearchMiners}
           eligibility={eligibility}
           targetRackLabel={rackSettings.label}
+          scope={scope}
           onDismiss={() => {
             setShowSearchMiners(false);
             setSelectedSlot(null);
