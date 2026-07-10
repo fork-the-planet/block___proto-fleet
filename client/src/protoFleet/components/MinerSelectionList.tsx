@@ -382,6 +382,18 @@ const MinerSelectionList = forwardRef<MinerSelectionListHandle, MinerSelectionLi
         } else if (eligBuildingId !== undefined) {
           merged.buildingIds = [eligBuildingId];
           merged.includeNoBuilding = true;
+        } else {
+          // Target rack has no building: assigning a miner clears its building,
+          // so only building-unplaced miners are assignable without a reparent.
+          // Pin includeNoBuilding. Server-side this admits the target rack's own
+          // members (their building-less rack matches) AND, via the no-rack
+          // branch, rackless miners with no direct building — while excluding a
+          // rackless miner directly placed in a building. For a NEW rack (no
+          // rack-id in the filter) the server drops the "rack has no building"
+          // sub-clause, since there are no members to preserve and it would
+          // otherwise pull in other building-less racks' members.
+          merged.buildingIds = [];
+          merged.includeNoBuilding = true;
         }
 
         if (userFilter.siteIds.length > 0) {
@@ -389,6 +401,12 @@ const MinerSelectionList = forwardRef<MinerSelectionListHandle, MinerSelectionLi
           merged.includeUnassigned = false;
         } else if (eligSiteId !== undefined) {
           merged.siteIds = [eligSiteId];
+          merged.includeUnassigned = true;
+        } else {
+          // Target rack isn't placed in a site: only site-unplaced miners are
+          // assignable without a reparent. Pin to "unassigned" so a
+          // directly-site-assigned miner doesn't leak into the default list.
+          merged.siteIds = [];
           merged.includeUnassigned = true;
         }
       }

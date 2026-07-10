@@ -213,15 +213,35 @@ describe("MinerSelectionList eligibility", () => {
     expect(filter.siteIds).toEqual([2n]);
   });
 
-  it("excludes all racked miners for a new rack (no rack id) but adds no rack/site/building ids", () => {
+  it("pins site + no-building when the target rack has a site but no building", () => {
+    render(<MinerSelectionList eligibility={{ rackId: 1n, siteId: 2n }} />);
+
+    // Direct-under-site rack: site pins to that site, and building pins to "no
+    // building" (includeNoBuilding). Server-side that admits the rack's own
+    // members and excludes rackless miners directly placed in a building.
+    // rackId is set (existing rack), so the server keeps the rack-derived
+    // no-building branch that surfaces the current members.
+    const filter = lastFleetFilter();
+    expect(filter.siteIds).toEqual([2n]);
+    expect(filter.includeUnassigned).toBe(true);
+    expect(filter.buildingIds).toEqual([]);
+    expect(filter.includeNoBuilding).toBe(true);
+  });
+
+  it("pins every dimension to unplaced-only for a new/unplaced rack (no eligibility)", () => {
     render(<MinerSelectionList eligibility={{}} />);
 
+    // A new/unplaced rack: assignable-without-reparent = fully-unplaced miners.
+    // Every dimension pins to "no id + include unassigned/no-building". With no
+    // rackId, the server drops includeNoBuilding's rack-derived branch and
+    // reads this as "no rack AND no direct building AND no site".
     const filter = lastFleetFilter();
     expect(filter.includeNoRack).toBe(true);
     expect(filter.rackIds).toEqual([]);
-    expect(filter.buildingIds).toEqual([]);
-    expect(filter.includeNoBuilding).toBe(false);
+    expect(filter.includeUnassigned).toBe(true);
     expect(filter.siteIds).toEqual([]);
+    expect(filter.includeNoBuilding).toBe(true);
+    expect(filter.buildingIds).toEqual([]);
   });
 
   it("respects a Rack facet that includes the target rack, dropping unracked, in assignable-only mode", async () => {

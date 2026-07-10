@@ -300,6 +300,10 @@ const RackOverviewPage = () => {
       columns: rackInfo.columns ?? 1,
       orderIndex: rackInfo.orderIndex as RackOrderIndex,
       coolingType: rackInfo.coolingType as RackCoolingType,
+      // Seed current placement (0 → undefined) so the settings dropdowns and
+      // miner eligibility reflect where the rack lives.
+      siteId: rack.placement?.site?.id || undefined,
+      buildingId: rack.placement?.building?.id || undefined,
     };
   }, [showEditModal, rack, rackInfo]);
 
@@ -555,6 +559,13 @@ const RackOverviewPage = () => {
           onDismiss={() => setShowEditModal(false)}
           onSave={() => {
             setShowEditModal(false);
+            resolveRack(rack.id);
+            void refetchStats();
+          }}
+          // Settings "Continue" persists before the final Save; refresh the
+          // overview in the background (modal stays open) so a later dismiss
+          // can't leave stale label/placement on screen.
+          onSettingsPersisted={() => {
             resolveRack(rack.id);
             void refetchStats();
           }}
