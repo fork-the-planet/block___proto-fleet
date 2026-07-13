@@ -17,6 +17,10 @@ export class RacksPage extends BasePage {
     await this.validateTitle("Fleet");
   }
 
+  async validateAddRackButtonHidden() {
+    await expect(this.page.getByRole("button", { name: "Add rack", exact: true })).toHaveCount(0);
+  }
+
   async clickAddRackButton() {
     await this.clickButton("Add rack");
     await this.validateTitleInModal("Rack settings");
@@ -423,8 +427,16 @@ export class RacksPage extends BasePage {
     await expect(popover).toBeHidden();
   }
 
-  async waitForRackListToLoad({ allowEmpty = true }: { allowEmpty?: boolean } = {}) {
-    await expect(this.page.getByRole("button", { name: "Add rack" }).first()).toBeVisible();
+  async waitForRackListToLoad({
+    allowEmpty = true,
+    requireManageAccess = true,
+  }: {
+    allowEmpty?: boolean;
+    requireManageAccess?: boolean;
+  } = {}) {
+    if (requireManageAccess) {
+      await expect(this.page.getByRole("button", { name: "Add rack" }).first()).toBeVisible();
+    }
 
     const rows = this.page.getByTestId("list-row");
     const noRowsText = this.page.getByText("You haven't set up any racks");
