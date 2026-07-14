@@ -104,14 +104,25 @@ func (h *Handler) DeleteSite(ctx context.Context, req *connect.Request[pb.Delete
 	if err != nil {
 		return nil, err
 	}
-	out, err := h.service.DeleteSite(ctx, info.OrganizationID, req.Msg.GetId())
+	// The org-scoped gate above ignores narrowing, but the delete cascade
+	// soft-deletes resources (infrastructure devices) whose own RPCs
+	// evaluate site:manage against the concrete site. Re-check against
+	// the target site so a caller narrowed away from it can't use
+	// DeleteSite as a bypass. Site-scoped-only callers still fail the
+	// org-scoped gate first — this check only tightens, never widens.
+	siteID := req.Msg.GetId()
+	if _, err := middleware.RequirePermission(ctx, authz.PermSiteManage, authz.ResourceContext{SiteID: &siteID}); err != nil {
+		return nil, err
+	}
+	out, err := h.service.DeleteSite(ctx, info.OrganizationID, siteID)
 	if err != nil {
 		return nil, err
 	}
 	return connect.NewResponse(&pb.DeleteSiteResponse{
-		UnassignedDeviceCount: out.UnassignedDeviceCount,
-		DeletedBuildingCount:  out.DeletedBuildingCount,
-		UnassignedRackCount:   out.UnassignedRackCount,
+		UnassignedDeviceCount:            out.UnassignedDeviceCount,
+		DeletedBuildingCount:             out.DeletedBuildingCount,
+		UnassignedRackCount:              out.UnassignedRackCount,
+		DeletedInfrastructureDeviceCount: out.DeletedInfrastructureDeviceCount,
 	}), nil
 }
 

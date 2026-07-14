@@ -127,6 +127,10 @@ message SiteWithCounts {
     // Lightweight list/table rollup. Omitted when the caller is not
     // authorized for telemetry stats.
     common.v1.FleetListStats list_stats = 5;
+    // Count of controllable infrastructure devices (e.g. facility fans)
+    // attached to the site. Included so the delete-confirm dialog can
+    // surface the full cascade impact.
+    int64 infrastructure_device_count = 6;
 }
 
 // ListSites
@@ -230,6 +234,9 @@ message DeleteSiteResponse {
     int64 unassigned_device_count = 1;
     int64 deleted_building_count  = 2;
     int64 unassigned_rack_count   = 3;
+    // Infrastructure devices (facility fans) soft-deleted by the
+    // cascade.
+    int64 deleted_infrastructure_device_count = 4;
 }
 
 // AssignDevicesToSite

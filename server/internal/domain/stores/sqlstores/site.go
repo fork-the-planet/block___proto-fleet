@@ -109,9 +109,10 @@ func (s *SQLSiteStore) ListSites(ctx context.Context, orgID int64) ([]models.Sit
 				CreatedAt:       row.CreatedAt,
 				UpdatedAt:       row.UpdatedAt,
 			},
-			DeviceCount:   row.DeviceCount,
-			BuildingCount: row.BuildingCount,
-			RackCount:     row.RackCount,
+			DeviceCount:               row.DeviceCount,
+			BuildingCount:             row.BuildingCount,
+			RackCount:                 row.RackCount,
+			InfrastructureDeviceCount: row.InfrastructureDeviceCount,
 		})
 	}
 	return out, nil
@@ -218,6 +219,17 @@ func (s *SQLSiteStore) SoftDeleteBuildingsBySite(ctx context.Context, orgID, sit
 	})
 	if err != nil {
 		return 0, fleeterror.NewInternalErrorf("failed to soft-delete buildings: %v", err)
+	}
+	return rowsAffected, nil
+}
+
+func (s *SQLSiteStore) SoftDeleteInfrastructureDevicesBySite(ctx context.Context, orgID, siteID int64) (int64, error) {
+	rowsAffected, err := s.GetQueries(ctx).SoftDeleteInfrastructureDevicesBySite(ctx, sqlc.SoftDeleteInfrastructureDevicesBySiteParams{
+		OrgID:  orgID,
+		SiteID: siteID,
+	})
+	if err != nil {
+		return 0, fleeterror.NewInternalErrorf("failed to soft-delete infrastructure devices: %v", err)
 	}
 	return rowsAffected, nil
 }

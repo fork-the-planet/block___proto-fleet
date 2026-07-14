@@ -34,11 +34,12 @@ type Site struct {
 // so the delete-confirm dialog has impact numbers without a second
 // round trip.
 type SiteWithCounts struct {
-	Site          Site
-	DeviceCount   int64
-	BuildingCount int64
-	RackCount     int64
-	ListStats     *FleetListStats
+	Site                      Site
+	DeviceCount               int64
+	BuildingCount             int64
+	RackCount                 int64
+	InfrastructureDeviceCount int64
+	ListStats                 *FleetListStats
 }
 
 // CreateSiteParams is the input shape for the Create flow.
@@ -79,10 +80,11 @@ type UpdateSiteParams struct {
 
 // DeleteSiteResult carries the cascade impact for the delete activity log.
 type DeleteSiteResult struct {
-	UnassignedDeviceCount       int64
-	UnassignedRackCount         int64
-	DeletedBuildingCount        int64
-	DeletedResponseProfileCount int64
+	UnassignedDeviceCount            int64
+	UnassignedRackCount              int64
+	DeletedBuildingCount             int64
+	DeletedResponseProfileCount      int64
+	DeletedInfrastructureDeviceCount int64
 }
 
 // PerDeviceConflictReason enumerates why a device was rejected by a
