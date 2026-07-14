@@ -3,6 +3,10 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { BarcodeDetector } from "barcode-detector/ponyfill";
 
 import { initBarcodeScanner } from "@/protoFleet/features/fleetManagement/utils/initBarcodeScanner";
+import {
+  getObjectCoverSourceCrop,
+  getObjectCoverSourceCropForRegion,
+} from "@/protoFleet/features/fleetManagement/utils/objectCoverSourceCrop";
 
 /**
  * Whether the current browsing context can open a live camera stream.
@@ -29,6 +33,11 @@ interface UseQrScannerOptions {
   onDetected: (rawValues: string[]) => void;
   /** When false, the scanner stays torn down (e.g. modal closed). */
   active: boolean;
+  /** Increment to restart a still-active camera session, such as after an error. */
+  restartKey?: number;
+  /** Optional visible scan target inside the preview. Live detection is cropped
+   *  to this region so nearby labels outside the reticle are ignored. */
+  scanRegionRef?: RefObject<HTMLElement | null>;
 }
 
 interface UseQrScannerResult {
@@ -60,13 +69,18 @@ const MAX_CONSECUTIVE_DECODE_FAILURES = 16;
  * live stream but the same WASM/native decoder still applies to a captured
  * photo.
  */
-export function useQrScanner({ onDetected, active }: UseQrScannerOptions): UseQrScannerResult {
+export function useQrScanner({
+  onDetected,
+  active,
+  restartKey = 0,
+  scanRegionRef,
+}: UseQrScannerOptions): UseQrScannerResult {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetector | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Offscreen canvas used to crop each frame to the visible preview square
-  // before decoding (see detectionFrame).
+  // Offscreen canvas used to crop each frame to the visible preview area before
+  // decoding (see detectionFrame).
   const cropCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectedRef = useRef(false);
   // Guards against overlapping decodes: detect() can take longer than
@@ -172,7 +186,7 @@ export function useQrScanner({ onDetected, active }: UseQrScannerOptions): UseQr
           if (!el || detectedRef.current || detectingRef.current || el.readyState < 2) return;
           detectingRef.current = true;
           try {
-            const results = await detector.detect(detectionFrame(el, cropCanvasRef));
+            const results = await detector.detect(detectionFrame(el, cropCanvasRef, scanRegionRef));
             // The effect may have torn down while detect() was in flight; don't
             // fire onDetected (a lookup + state update) after teardown.
             if (cancelled) return;
@@ -211,41 +225,57 @@ export function useQrScanner({ onDetected, active }: UseQrScannerOptions): UseQr
       stop();
       setStatus("idle");
     };
-  }, [active, getDetector, stop]);
+  }, [active, getDetector, restartKey, scanRegionRef, stop]);
 
   return { videoRef, status, errorMessage, detectFromBlob };
 }
 
 /**
- * The live preview shows an `aspect-square`, `object-cover` crop of the (often
- * 16:9) camera stream, but `detect()` reads the full frame. Decode only the
- * visible center square so a barcode sitting in the hidden side margins — an
- * adjacent label in a dense rack row — can't be scanned and assigned while the
- * operator is aiming at a different, visible label. Returns the video unchanged
- * when there's nothing to crop (a square or not-yet-sized frame).
+ * The live preview renders the camera stream with `object-cover`, but
+ * `detect()` reads the full video frame. Decode only the source pixels in the
+ * visible scan target so labels outside the reticle cannot be assigned while
+ * the operator is aiming at a different label.
  */
 function detectionFrame(
   video: HTMLVideoElement,
   canvasRef: RefObject<HTMLCanvasElement | null>,
+  scanRegionRef?: RefObject<HTMLElement | null>,
 ): HTMLVideoElement | HTMLCanvasElement {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  if (!vw || !vh || vw === vh) return video;
+  const rect = video.getBoundingClientRect();
+  const renderedWidth = rect.width || video.clientWidth;
+  const renderedHeight = rect.height || video.clientHeight;
+  const scanRegion = scanRegionRef?.current;
+  const scanRegionRect = scanRegion?.getBoundingClientRect();
+  const crop = scanRegionRect
+    ? getObjectCoverSourceCropForRegion({
+        sourceWidth: vw,
+        sourceHeight: vh,
+        renderedWidth,
+        renderedHeight,
+        renderedRegionX: scanRegionRect.left - rect.left,
+        renderedRegionY: scanRegionRect.top - rect.top,
+        renderedRegionWidth: scanRegionRect.width,
+        renderedRegionHeight: scanRegionRect.height,
+      })
+    : getObjectCoverSourceCrop({ sourceWidth: vw, sourceHeight: vh, renderedWidth, renderedHeight });
 
-  const side = Math.min(vw, vh);
-  const sx = (vw - side) / 2;
-  const sy = (vh - side) / 2;
+  if (!crop) return video;
+
+  const isFullFrame = crop.sx === 0 && crop.sy === 0 && crop.sw === vw && crop.sh === vh;
+  if (isFullFrame) return video;
 
   let canvas = canvasRef.current;
   if (!canvas) {
     canvas = document.createElement("canvas");
     canvasRef.current = canvas;
   }
-  canvas.width = side;
-  canvas.height = side;
+  canvas.width = Math.max(1, Math.round(crop.sw));
+  canvas.height = Math.max(1, Math.round(crop.sh));
   const ctx = canvas.getContext("2d");
   if (!ctx) return video;
-  ctx.drawImage(video, sx, sy, side, side, 0, 0, side, side);
+  ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
