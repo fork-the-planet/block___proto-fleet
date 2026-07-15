@@ -34,8 +34,8 @@ type PopoverProps = PopoverContentProps & {
    * Cap the popover's height to the visible viewport (portal-fixed only) so a
    * menu taller than the screen scrolls internally instead of overflowing the
    * tappable area. Tracks `visualViewport`, so it holds under pinch-zoom and
-   * mobile browser-chrome collapse where a CSS `100vh` cap would not. Pair with
-   * `overflow-y-auto` on the popover's className to make the overflow scroll.
+   * mobile browser-chrome collapse where a CSS `100vh` cap would not. The inner
+   * content surface scrolls its own overflow, so callers don't add `overflow-y-auto`.
    */
   constrainHeightToViewport?: boolean;
 };
@@ -152,16 +152,20 @@ const Popover = ({
       className={clsx(
         "z-50 rounded-3xl backdrop-blur-[7px]",
         renderMode === "portal-fixed" ? "fixed" : "absolute",
-        // The viewport cap (`maxHeight`) is applied to this positioned wrapper via
-        // `popoverStyle`, so the wrapper must also be the scroller — otherwise the
-        // unconstrained inner content paints past the cap and clips off-screen.
-        constrainHeightToViewport && "overflow-y-auto overscroll-contain",
         popoverAnimation,
       )}
       style={popoverStyle}
       data-testid={testId}
     >
-      {content()}
+      {/*
+       * When capping height to the viewport, scroll on the inner PopoverContent — the
+       * element that already carries the surface (bg, radius, shadow-200) — exactly like
+       * BulkActionsPopover does. Scrolling the outer wrapper instead put the scrollbar in
+       * the gap between two stacked surfaces and clipped the inner shadow. `max-h-[inherit]`
+       * picks up the JS-computed viewport cap that `usePopoverPosition` writes to the
+       * wrapper's `maxHeight`, so the surface itself scrolls and its shadow stays intact.
+       */}
+      {content(constrainHeightToViewport ? "max-h-[inherit] overflow-y-auto overscroll-contain" : undefined)}
     </div>
   );
 
