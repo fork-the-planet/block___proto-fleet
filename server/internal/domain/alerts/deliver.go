@@ -105,6 +105,13 @@ func (d *Deliverer) Deliver(ctx context.Context, alerts []Alert) {
 		if a.Labels[ruleLabelScope] == ruleScopeInternal {
 			continue
 		}
+		// Grafana's synthetic evaluation-failure alerts inherit the rule's static
+		// labels (incl. organization_id); they are operator signal, not tenant alerts.
+		// The datasource_uid label only exists on synthetic alerts, so a real rule
+		// that merely shares the name (blocked for user rules anyway) still delivers.
+		if name := a.Labels["alertname"]; (name == "DatasourceError" || name == "DatasourceNoData") && a.Labels["datasource_uid"] != "" {
+			continue
+		}
 		orgID, err := strconv.ParseInt(a.Labels[ruleLabelOrganizationID], 10, 64)
 		if err != nil || orgID == 0 {
 			continue

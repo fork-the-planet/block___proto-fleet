@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 	"strconv"
 
 	"connectrpc.com/connect"
@@ -56,9 +57,9 @@ func (h *Handler) authorizeActor(ctx context.Context, permission string) (int64,
 	return info.OrganizationID, info.Username, nil
 }
 
-// requireMinerRead gates channel mutations behind org-wide miner:read: a saved channel delivers
-// device identity (id/name/MAC) for the whole org, so a caller whose miner:read is narrowed to a
-// subset of sites must not be able to route other sites' device data to an external destination.
+// requireMinerRead gates channel and rule mutations behind org-wide miner:read: both surfaces
+// deliver device identity (id/name/MAC) for the whole org, so a caller whose miner:read is
+// narrowed to a subset of sites must not be able to route other sites' device data outward.
 func (h *Handler) requireMinerRead(ctx context.Context) error {
 	_, err := middleware.RequireOrgWidePermission(ctx, authz.PermMinerRead)
 	return err
@@ -67,6 +68,19 @@ func (h *Handler) requireMinerRead(ctx context.Context) error {
 func mapErr(err error) error {
 	if errors.Is(err, alerts.ErrNotFound) {
 		return fleeterror.NewNotFoundError(err.Error())
+	}
+	// Surface Grafana contract rejections (e.g. duplicate rule titles) as
+	// client errors instead of opaque internals; messages are pre-redacted.
+	var ge *alerts.GrafanaError
+	if errors.As(err, &ge) {
+		switch ge.StatusCode {
+		case http.StatusConflict:
+			return fleeterror.NewAlreadyExistsError(ge.Message)
+		case http.StatusBadRequest:
+			return fleeterror.NewInvalidArgumentError(ge.Message)
+		case http.StatusNotFound:
+			return fleeterror.NewNotFoundError(ge.Message)
+		}
 	}
 	return err
 }
@@ -198,6 +212,57 @@ func (h *Handler) ResumeRule(ctx context.Context, req *connect.Request[alertsv1.
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&alertsv1.ResumeRuleResponse{Rule: ruleToProto(*rule)}), nil
+}
+
+// Rule create/update mirror channel mutations' requireMinerRead: a rule
+// evaluates every org device and fans per-device alerts out to channels.
+func (h *Handler) CreateRule(ctx context.Context, req *connect.Request[alertsv1.CreateRuleRequest]) (*connect.Response[alertsv1.CreateRuleResponse], error) {
+	orgID, err := h.authorize(ctx, authz.PermAlertManage)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.requireMinerRead(ctx); err != nil {
+		return nil, err
+	}
+	cfg, err := protoToRuleConfig(req.Msg.GetConfig())
+	if err != nil {
+		return nil, err
+	}
+	rule, err := h.svc.CreateRule(ctx, orgID, cfg)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return connect.NewResponse(&alertsv1.CreateRuleResponse{Rule: ruleToProto(*rule)}), nil
+}
+
+func (h *Handler) UpdateRule(ctx context.Context, req *connect.Request[alertsv1.UpdateRuleRequest]) (*connect.Response[alertsv1.UpdateRuleResponse], error) {
+	orgID, err := h.authorize(ctx, authz.PermAlertManage)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.requireMinerRead(ctx); err != nil {
+		return nil, err
+	}
+	cfg, err := protoToRuleConfig(req.Msg.GetConfig())
+	if err != nil {
+		return nil, err
+	}
+	rule, err := h.svc.UpdateRule(ctx, orgID, req.Msg.GetId(), cfg)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return connect.NewResponse(&alertsv1.UpdateRuleResponse{Rule: ruleToProto(*rule)}), nil
+}
+
+func (h *Handler) DeleteRule(ctx context.Context, req *connect.Request[alertsv1.DeleteRuleRequest]) (*connect.Response[alertsv1.DeleteRuleResponse], error) {
+	orgID, err := h.authorize(ctx, authz.PermAlertManage)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.svc.DeleteRule(ctx, orgID, req.Msg.GetId()); err != nil {
+		return nil, mapErr(err)
+	}
+	return connect.NewResponse(&alertsv1.DeleteRuleResponse{}), nil
 }
 
 func (h *Handler) ListMaintenanceWindows(ctx context.Context, _ *connect.Request[alertsv1.ListMaintenanceWindowsRequest]) (*connect.Response[alertsv1.ListMaintenanceWindowsResponse], error) {
@@ -354,7 +419,7 @@ func protoToChannel(id, name string, kind alertsv1.ChannelKind, wh *alertsv1.Web
 }
 
 func ruleToProto(r alerts.Rule) *alertsv1.Rule {
-	return &alertsv1.Rule{
+	out := &alertsv1.Rule{
 		Id:              r.ID,
 		OrganizationId:  r.OrganizationID,
 		Name:            r.Name,
@@ -365,7 +430,115 @@ func ruleToProto(r alerts.Rule) *alertsv1.Rule {
 		Description:     r.Description,
 		DurationSeconds: r.DurationSeconds,
 		Enabled:         r.Enabled,
+		Origin:          ruleOriginToProto(r.Origin),
 	}
+	if r.Config != nil {
+		out.Config = ruleConfigToProto(*r.Config)
+	}
+	return out
+}
+
+func ruleOriginToProto(o alerts.RuleOrigin) alertsv1.RuleOrigin {
+	switch o {
+	case alerts.RuleOriginUser:
+		return alertsv1.RuleOrigin_RULE_ORIGIN_USER
+	case alerts.RuleOriginProvisioned:
+		return alertsv1.RuleOrigin_RULE_ORIGIN_PROVISIONED
+	}
+	return alertsv1.RuleOrigin_RULE_ORIGIN_UNSPECIFIED
+}
+
+func ruleConfigToProto(c alerts.RuleConfig) *alertsv1.RuleConfig {
+	out := &alertsv1.RuleConfig{
+		Name:            c.Name,
+		DurationSeconds: c.DurationSeconds,
+	}
+	switch {
+	case c.Offline != nil:
+		out.TemplateConfig = &alertsv1.RuleConfig_Offline{Offline: &alertsv1.OfflineConfig{}}
+	case c.Hashrate != nil:
+		out.TemplateConfig = &alertsv1.RuleConfig_Hashrate{Hashrate: &alertsv1.HashrateConfig{
+			Mode:  hashrateModeToProto(c.Hashrate.Mode),
+			Value: c.Hashrate.Value,
+			Unit:  hashrateUnitToProto(c.Hashrate.Unit),
+		}}
+	case c.Temperature != nil:
+		out.TemplateConfig = &alertsv1.RuleConfig_Temperature{Temperature: &alertsv1.TemperatureConfig{
+			MaxCelsius: c.Temperature.MaxCelsius,
+		}}
+	}
+	return out
+}
+
+func protoToRuleConfig(c *alertsv1.RuleConfig) (alerts.RuleConfig, error) {
+	if c == nil {
+		return alerts.RuleConfig{}, fleeterror.NewInvalidArgumentError("rule config is required")
+	}
+	out := alerts.RuleConfig{
+		Name:            c.GetName(),
+		DurationSeconds: c.GetDurationSeconds(),
+	}
+	switch tc := c.GetTemplateConfig().(type) {
+	case *alertsv1.RuleConfig_Offline:
+		out.Offline = &alerts.OfflineRuleConfig{}
+	case *alertsv1.RuleConfig_Hashrate:
+		mode, err := protoToHashrateMode(tc.Hashrate.GetMode())
+		if err != nil {
+			return alerts.RuleConfig{}, err
+		}
+		out.Hashrate = &alerts.HashrateRuleConfig{
+			Mode:  mode,
+			Value: tc.Hashrate.GetValue(),
+			Unit:  protoToHashrateUnit(tc.Hashrate.GetUnit()),
+		}
+	case *alertsv1.RuleConfig_Temperature:
+		out.Temperature = &alerts.TemperatureRuleConfig{MaxCelsius: tc.Temperature.GetMaxCelsius()}
+	default:
+		return alerts.RuleConfig{}, fleeterror.NewInvalidArgumentError("rule template config is required")
+	}
+	return out, nil
+}
+
+func hashrateModeToProto(m alerts.HashrateMode) alertsv1.HashrateMode {
+	switch m {
+	case alerts.HashrateModePctExpected:
+		return alertsv1.HashrateMode_HASHRATE_MODE_PCT_EXPECTED
+	case alerts.HashrateModeAbsolute:
+		return alertsv1.HashrateMode_HASHRATE_MODE_ABSOLUTE
+	}
+	return alertsv1.HashrateMode_HASHRATE_MODE_UNSPECIFIED
+}
+
+func protoToHashrateMode(m alertsv1.HashrateMode) (alerts.HashrateMode, error) {
+	switch m {
+	case alertsv1.HashrateMode_HASHRATE_MODE_PCT_EXPECTED:
+		return alerts.HashrateModePctExpected, nil
+	case alertsv1.HashrateMode_HASHRATE_MODE_ABSOLUTE:
+		return alerts.HashrateModeAbsolute, nil
+	case alertsv1.HashrateMode_HASHRATE_MODE_UNSPECIFIED:
+	}
+	return "", fleeterror.NewInvalidArgumentError("hashrate mode is required")
+}
+
+func hashrateUnitToProto(u alerts.HashrateUnit) alertsv1.HashrateUnit {
+	switch u {
+	case alerts.HashrateUnitTerahash:
+		return alertsv1.HashrateUnit_HASHRATE_UNIT_TERAHASH
+	case alerts.HashrateUnitPetahash:
+		return alertsv1.HashrateUnit_HASHRATE_UNIT_PETAHASH
+	}
+	return alertsv1.HashrateUnit_HASHRATE_UNIT_UNSPECIFIED
+}
+
+func protoToHashrateUnit(u alertsv1.HashrateUnit) alerts.HashrateUnit {
+	switch u {
+	case alertsv1.HashrateUnit_HASHRATE_UNIT_TERAHASH:
+		return alerts.HashrateUnitTerahash
+	case alertsv1.HashrateUnit_HASHRATE_UNIT_PETAHASH:
+		return alerts.HashrateUnitPetahash
+	case alertsv1.HashrateUnit_HASHRATE_UNIT_UNSPECIFIED:
+	}
+	return ""
 }
 
 func maintenanceWindowToProto(s alerts.MaintenanceWindow) *alertsv1.MaintenanceWindow {
@@ -459,8 +632,8 @@ func historyEntryToProto(n notificationhistory.StoredNotification, includeDevice
 }
 
 // isSourceLevelTemplate reports whether the template scopes the alert to an
-// MQTT curtailment source rather than a device. All rules are operator-
-// provisioned, so the template label is trustworthy.
+// MQTT curtailment source rather than a device. The label stays trustworthy:
+// user rules only emit offline/hashrate/temperature (compileUserRule).
 func isSourceLevelTemplate(t string) bool {
 	tmpl := alerts.RuleTemplate(t)
 	return tmpl == alerts.RuleTemplateMQTTCurtailment || tmpl == alerts.RuleTemplateMQTTDisconnected

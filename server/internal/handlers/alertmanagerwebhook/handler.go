@@ -203,7 +203,9 @@ func buildRows(alerts []alertmanagerAlert, orgIDs []int64) (rows []*notification
 			}
 			continue
 		}
-		if !isGlobalSelfMonitoringAlert(alert.Labels) || len(orgIDs) == 0 {
+		// Synthetic evaluation failures inherit the self-monitoring rule_group
+		// label too; they stay one org-less operator row, never a tenant fan-out.
+		if !isGlobalSelfMonitoringAlert(alert.Labels) || isSyntheticEvaluationAlert(alert.Labels) || len(orgIDs) == 0 {
 			if !add(&row) {
 				return rows, true
 			}
@@ -286,6 +288,13 @@ func isGlobalSelfMonitoringAlert(labels map[string]string) bool {
 	return labels[labelRuleGroup] == ruleGroupSelfMonitoring
 }
 
+// Grafana stamps datasource_uid only on its synthetic evaluation-failure
+// alerts; real alerts merely named like them don't carry it.
+func isSyntheticEvaluationAlert(labels map[string]string) bool {
+	name := labels[labelAlertName]
+	return (name == "DatasourceError" || name == "DatasourceNoData") && labels["datasource_uid"] != ""
+}
+
 func alertToRow(alert alertmanagerAlert) notificationhistory.Notification {
 	alertName := alert.Labels[labelAlertName]
 	if alertName == "" {
@@ -315,6 +324,11 @@ func alertToRow(alert alertmanagerAlert) notificationhistory.Notification {
 	if !alert.EndsAt.IsZero() {
 		t := alert.EndsAt.UTC()
 		row.EndsAt = &t
+	}
+	// Synthetic evaluation failures inherit a user rule's static org label;
+	// persist them org-less so tenants never see them (operator triage only).
+	if isSyntheticEvaluationAlert(alert.Labels) {
+		return row
 	}
 	if orgID, ok := parseOrgID(alert.Labels[labelOrganizationID]); ok {
 		row.OrganizationID = &orgID

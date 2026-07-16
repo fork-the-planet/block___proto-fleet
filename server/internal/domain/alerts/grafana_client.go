@@ -74,7 +74,70 @@ func (g *Grafana) GetAlertRule(ctx context.Context, uid string) (*GrafanaAlertRu
 	return &out, nil
 }
 
-// No Create/Update/DeleteAlertRule: rules are YAML-provisioned and Grafana 11.6+ blocks in-place API edits.
+// Rule writes apply only to API-created rules: YAML-provisioned rules stay locked
+// (Grafana 11.6+ blocks in-place edits of file-provenance rules; X-Disable-Provenance frees ours).
+func (g *Grafana) CreateAlertRule(ctx context.Context, rule GrafanaAlertRule) (*GrafanaAlertRule, error) {
+	var out GrafanaAlertRule
+	if err := g.do(ctx, http.MethodPost, "/api/v1/provisioning/alert-rules", rule, &out); err != nil {
+		return nil, fmt.Errorf("create alert rule: %w", err)
+	}
+	return &out, nil
+}
+
+func (g *Grafana) UpdateAlertRule(ctx context.Context, rule GrafanaAlertRule) (*GrafanaAlertRule, error) {
+	var out GrafanaAlertRule
+	if err := g.do(ctx, http.MethodPut, "/api/v1/provisioning/alert-rules/"+rule.UID, rule, &out); err != nil {
+		return nil, fmt.Errorf("update alert rule: %w", err)
+	}
+	return &out, nil
+}
+
+func (g *Grafana) DeleteAlertRule(ctx context.Context, uid string) error {
+	if err := g.do(ctx, http.MethodDelete, "/api/v1/provisioning/alert-rules/"+uid, nil, nil); err != nil {
+		return fmt.Errorf("delete alert rule: %w", err)
+	}
+	return nil
+}
+
+type GrafanaFolder struct {
+	UID   string `json:"uid"`
+	Title string `json:"title"`
+}
+
+// EnsureFolder creates the folder if missing; a concurrent-create conflict resolves to the existing folder.
+func (g *Grafana) EnsureFolder(ctx context.Context, uid, title string) error {
+	var got GrafanaFolder
+	err := g.do(ctx, http.MethodGet, "/api/folders/"+uid, nil, &got)
+	if err == nil {
+		return nil
+	}
+	if !IsNotFound(err) {
+		return fmt.Errorf("get folder: %w", err)
+	}
+	createErr := g.do(ctx, http.MethodPost, "/api/folders", GrafanaFolder{UID: uid, Title: title}, &got)
+	if createErr == nil || isConflict(createErr) {
+		return nil
+	}
+	return fmt.Errorf("create folder: %w", createErr)
+}
+
+type GrafanaRuleGroup struct {
+	Title     string             `json:"title"`
+	FolderUID string             `json:"folderUid"`
+	Interval  int64              `json:"interval"`
+	Rules     []GrafanaAlertRule `json:"rules"`
+}
+
+// SetRuleGroup replaces the group's whole definition (Grafana's PUT semantics),
+// so callers must supply the group's full rule list — trivial for user rules,
+// which are one-per-group.
+func (g *Grafana) SetRuleGroup(ctx context.Context, group GrafanaRuleGroup) error {
+	path := "/api/v1/provisioning/folder/" + group.FolderUID + "/rule-groups/" + group.Title
+	if err := g.do(ctx, http.MethodPut, path, group, nil); err != nil {
+		return fmt.Errorf("set rule group: %w", err)
+	}
+	return nil
+}
 
 type GrafanaSilence struct {
 	ID        string                  `json:"id,omitempty"`
@@ -281,6 +344,14 @@ func IsNotFound(err error) bool {
 	var ge *GrafanaError
 	if errors.As(err, &ge) {
 		return ge.StatusCode == http.StatusNotFound
+	}
+	return false
+}
+
+func isConflict(err error) bool {
+	var ge *GrafanaError
+	if errors.As(err, &ge) {
+		return ge.StatusCode == http.StatusConflict || ge.StatusCode == http.StatusPreconditionFailed
 	}
 	return false
 }
