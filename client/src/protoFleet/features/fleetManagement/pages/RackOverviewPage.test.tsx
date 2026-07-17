@@ -39,7 +39,8 @@ vi.mock("@/protoFleet/api/buildings", () => ({
   useBuildings: () => mockUseBuildings(),
 }));
 
-vi.mock("@/protoFleet/api/sites", () => ({
+vi.mock("@/protoFleet/api/sites", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/protoFleet/api/sites")>()),
   useSites: () => mockUseSites(),
 }));
 
@@ -352,6 +353,82 @@ describe("RackOverviewPage", () => {
     renderRackOverviewPage();
 
     expect(await screen.findByTestId("rack-page-breadcrumb-link-0")).toHaveAttribute("href", "/unassigned/fleet/racks");
+  });
+
+  it("syncs a mismatched header scope to the rack's own site on this headerless route (#764)", async () => {
+    // Deep-link to a rack whose site differs from the persisted header scope.
+    useFleetStore.setState((state) => {
+      state.ui.activeSite = { kind: "site", id: "99", slug: "elsewhere" };
+    });
+    const rackInSite = create(DeviceSetSchema, {
+      id: 7n,
+      label: rackName,
+      typeDetails: { case: "rackInfo", value: { rows: 6, columns: 5, zone: rackZone, siteId: 22n } },
+    });
+    mockResolvedRackPageData(rackInSite, {
+      sites: [{ site: { id: 22n, name: "Denver", slug: "denver" } }],
+    });
+
+    renderRackOverviewPage();
+
+    await waitFor(() =>
+      expect(useFleetStore.getState().ui.activeSite).toEqual({ kind: "site", id: "22", slug: "denver" }),
+    );
+  });
+
+  it("syncs from rack placement site when the building catalog is unavailable (#764)", async () => {
+    // Rack is placed under a building (no rackInfo.siteId), and the auxiliary
+    // listAllBuildings request returns nothing — but the rack's own placement
+    // still carries its site, so the sync must fire off that.
+    useFleetStore.setState((state) => {
+      state.ui.activeSite = { kind: "site", id: "99", slug: "elsewhere" };
+    });
+    const rackUnderBuilding = create(DeviceSetSchema, {
+      id: 7n,
+      label: rackName,
+      typeDetails: { case: "rackInfo", value: { rows: 6, columns: 5, zone: rackZone, buildingId: 11n } },
+      placement: { site: { id: 22n } },
+    });
+    mockResolvedRackPageData(rackUnderBuilding, {
+      allBuildings: [],
+      sites: [{ site: { id: 22n, name: "Denver", slug: "denver" } }],
+    });
+
+    renderRackOverviewPage();
+
+    await waitFor(() =>
+      expect(useFleetStore.getState().ui.activeSite).toEqual({ kind: "site", id: "22", slug: "denver" }),
+    );
+  });
+
+  it("moves a specific-site header scope to unassigned for an unassigned rack (#764)", async () => {
+    // Unassigned rack (no placement site, no building) opened while a specific
+    // site is persisted — the header must drop to the unassigned bucket so the
+    // miner picker isn't filtered to the wrong site.
+    useFleetStore.setState((state) => {
+      state.ui.activeSite = { kind: "site", id: "99", slug: "elsewhere" };
+    });
+    // Default rack (id 7) has no siteId, buildingId, or placement.
+
+    renderRackOverviewPage();
+
+    await waitFor(() => expect(useFleetStore.getState().ui.activeSite).toEqual({ kind: "unassigned" }));
+  });
+
+  it("leaves an all-sites header scope untouched when viewing a rack (#764)", async () => {
+    const rackInSite = create(DeviceSetSchema, {
+      id: 7n,
+      label: rackName,
+      typeDetails: { case: "rackInfo", value: { rows: 6, columns: 5, zone: rackZone, siteId: 22n } },
+    });
+    mockResolvedRackPageData(rackInSite, {
+      sites: [{ site: { id: 22n, name: "Denver", slug: "denver" } }],
+    });
+
+    renderRackOverviewPage();
+
+    await waitFor(() => expect(screen.getAllByText(rackName).length).toBeGreaterThan(0));
+    expect(useFleetStore.getState().ui.activeSite).toEqual(DEFAULT_ACTIVE_SITE);
   });
 
   it("keeps rack detail header actions compact on mobile", async () => {
